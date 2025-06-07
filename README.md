@@ -50,3 +50,4 @@ DealTracker is a Python script that monitors products on Amul, Myntra, Amazon, a
 - Make sure you have [ChromeDriver](https://sites.google.com/chromium.org/driver/) installed and available in your PATH for Selenium to work.
 - This script is for personal use and educational purposes. Please respect the terms of service of the websites you monitor.
 
+![Demo](/screencast/productAlerts.gif)
