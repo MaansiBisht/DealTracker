@@ -57,26 +57,32 @@ DealTracker/
     cd DealTracker
     ```
 
-2. **Install dependencies:**
+2. **(Recommended) Create a virtual environment:**
+    ```
+    python -m venv .venv
+    source .venv/bin/activate   # Windows: .venv\Scripts\activate
+    ```
+
+3. **Install dependencies:**
     ```
     pip install -r requirements.txt
     ```
 
-3. **Configure environment variables:**
-    - Create a `.env` file in the project root with your email credentials and other required settings.
-    - Example:
+4. **Configure environment variables:**
+    - Copy `.env.example` to `.env` and fill in your values:
       ```
-      EMAIL_ADDRESS=your_email@example.com
-      EMAIL_PASSWORD=your_password
-      PINCODE=123456
+      cp .env.example .env
       ```
+    - `EMAIL_PASSWORD` must be a **Google App Password**, not your regular Gmail password.
+      Generate one at <https://myaccount.google.com/apppasswords> (requires 2FA on your Google account).
+    - `PINCODE` is only used by the Amul scraper to set delivery pincode before reading stock/price.
 
-4. **Run the script:**
+5. **Run the script:**
     ```
     python main.py
     ```
-    
-5. **Enter product/hotel details and thresholds via CLI:**
+
+6. **Enter product/hotel details and thresholds via CLI:**
     - When you run the script, you will be prompted in the terminal to enter the product/hotel URLs, desired alert prices, and other relevant details for monitoring.
     - The script automatically detects if you're tracking a product or hotel and adjusts the monitoring accordingly.
 
@@ -92,6 +98,8 @@ For hotel price tracking, URLs must include check-in/check-out dates:
 python start_pullman_all_platforms.py
 ```
 This script scans a specific hotel across all supported platforms simultaneously and finds the best deals.
+
+> Note: `start_pullman_all_platforms.py` is hard-coded to *Pullman New Delhi Aerocity* and the next Mon→Tue check-in window. Treat it as an example script — copy and edit the URLs/dates inside `get_pullman_urls()` for your own property.
 
 **Monitoring Intervals:**
 - **Products:** Check every hour

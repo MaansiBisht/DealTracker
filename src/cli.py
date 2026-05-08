@@ -8,7 +8,7 @@ def get_user_input():
     print("=" * 50)
     print(f"Products: {', '.join(SUPPORTED_PLATFORMS)}")
     print(f"Hotels: {', '.join(SUPPORTED_HOTELS)}\n")
-    print("You can set up alerts for: Stock availablity , Low price")
+    print("You can set up alerts for: Stock availability, Low price")
     print("-" * 50)
 
     # URL input
