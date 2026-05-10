@@ -10,8 +10,18 @@ Vite dev server at :5173 with its built-in proxy to :8000.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# Configure root logging once at import time so every dealtracker.* logger
+# under uvicorn produces uniform output. Honor LOG_LEVEL if set.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

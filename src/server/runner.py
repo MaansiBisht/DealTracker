@@ -239,20 +239,24 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-_PRICE_RE = re.compile(r"[^\d.]")
+_PRICE_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
 def _parse_price(raw: object) -> float | None:
+    """
+    Pull a number out of a price string. Handles "₹156.00", "Rs. 1,299",
+    "44,899", bare ints/floats, and refuses gracefully on garbage.
+    """
     if raw is None:
         return None
     if isinstance(raw, (int, float)):
         return float(raw)
     if isinstance(raw, str):
-        cleaned = _PRICE_RE.sub("", raw.replace(",", ""))
-        if not cleaned:
+        match = _PRICE_RE.search(raw)
+        if not match:
             return None
         try:
-            return float(cleaned)
+            return float(match.group(0).replace(",", ""))
         except ValueError:
             return None
     return None

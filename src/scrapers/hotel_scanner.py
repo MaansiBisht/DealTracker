@@ -1,5 +1,9 @@
+import logging
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+
+log = logging.getLogger(__name__)
 
 
 def get_base_hotel_url(url):
@@ -50,9 +54,8 @@ def scan_hotel_prices_monthly(driver, url, platform, scraper_func, days=30):
     
     results = []
     
-    print(f"\nScanning prices for next {days} days...")
-    print("-" * 50)
-    
+    log.info("scanning hotel prices · platform=%s · %d days", platform, days)
+
     for i in range(days):
         checkin = today + timedelta(days=i)
         checkout = checkin + timedelta(days=1)
@@ -83,19 +86,18 @@ def scan_hotel_prices_monthly(driver, url, platform, scraper_func, days=30):
             }
             results.append(day_result)
             
-            # Print progress
             status = f"₹{price_num:,.0f}" if price_num else availability
-            print(f"  {checkin.strftime('%Y-%m-%d')} ({checkin.strftime('%a')}): {status}")
-            
+            log.debug("%s (%s): %s", checkin.strftime('%Y-%m-%d'), checkin.strftime('%a'), status)
+
         except Exception as e:
             results.append({
                 'date': checkin.strftime("%Y-%m-%d"),
                 'day': checkin.strftime("%a"),
                 'price': None,
                 'availability': 'error',
-                'error': str(e)
+                'error': str(e),
             })
-            print(f"  {checkin.strftime('%Y-%m-%d')}: Error - {e}")
+            log.warning("%s scan failed: %s", checkin.strftime('%Y-%m-%d'), e)
     
     return results
 

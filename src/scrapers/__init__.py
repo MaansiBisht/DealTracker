@@ -1,3 +1,5 @@
+import logging
+
 from .amul import scrape_amul
 from .myntra import scrape_myntra
 from .flipkart import scrape_flipkart
@@ -7,6 +9,9 @@ from .booking import scrape_booking
 from .makemytrip import scrape_makemytrip, scrape_goibibo
 from .agoda import scrape_agoda
 from .hotel_scanner import scan_hotel_prices_monthly, format_price_report, find_best_prices
+
+log = logging.getLogger(__name__)
+
 
 SCRAPERS = {
     'amul': scrape_amul,
@@ -54,5 +59,5 @@ def route_scraper(driver, url):
     if scraper:
         return scraper(driver, url)
     else:
-        print("Unsupported platform or invalid URL.")
+        log.warning("unsupported platform or invalid URL: %s", url)
         return None

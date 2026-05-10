@@ -1,6 +1,10 @@
 import json
+import logging
 import time
 from bs4 import BeautifulSoup
+
+
+log = logging.getLogger(__name__)
 
 
 def scrape_myntra(driver, url):
@@ -28,8 +32,7 @@ def scrape_myntra(driver, url):
             continue
 
     if not product_data:
-        driver.save_screenshot("myntra_test.png")
-        print("No Product schema found.")
+        log.warning("no Product JSON-LD schema found at %s", url)
         return None
 
     # Extract details
