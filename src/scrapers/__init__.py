@@ -8,7 +8,6 @@ from .amazfit import scrape_amazfit
 from .booking import scrape_booking
 from .makemytrip import scrape_makemytrip, scrape_goibibo
 from .agoda import scrape_agoda
-from .hotel_scanner import scan_hotel_prices_monthly, format_price_report, find_best_prices
 
 log = logging.getLogger(__name__)
 

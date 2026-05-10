@@ -17,7 +17,7 @@ export function Console({ view }: ConsoleProps) {
   const { jobs, loading, error, create, stop } = useJobs(kind);
 
   const newWatchHint = view === 'hotels'
-    ? 'track a hotel URL · scans next 30 days'
+    ? 'track a hotel URL · re-scrapes the date in your URL'
     : 'track a product URL';
 
   const runningCount = jobs.filter((j) => j.status === 'running' || j.status === 'pending').length;

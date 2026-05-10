@@ -1,4 +1,12 @@
-import type { Job, JobCreatePayload, JobKind, TickEvent } from '~/types/job';
+import type {
+  Job,
+  JobCreatePayload,
+  JobKind,
+  TelegramPairingResponse,
+  TelegramPairingStatus,
+  TelegramStatus,
+  TickEvent,
+} from '~/types/job';
 
 /**
  * Typed fetch wrapper. All endpoints are relative — Vite proxies /api in
@@ -44,6 +52,14 @@ export const api = {
 
   stopJob: (id: string) =>
     http<Job>(`/api/jobs/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+
+  telegramStatus: () => http<TelegramStatus>('/api/telegram/status'),
+
+  telegramStartPairing: () =>
+    http<TelegramPairingResponse>('/api/telegram/start-pairing', { method: 'POST' }),
+
+  telegramPairingStatus: (token: string) =>
+    http<TelegramPairingStatus>(`/api/telegram/pairing/${encodeURIComponent(token)}`),
 
   recentEvents: (opts?: { limit?: number; jobId?: string; kind?: JobKind }) => {
     const params = new URLSearchParams();

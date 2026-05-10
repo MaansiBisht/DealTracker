@@ -17,6 +17,7 @@ from .events import bus
 from .models import Event, Job
 from .schemas import EventOut, HealthOut, JobCreate, JobOut
 from .scheduler import schedule_job, unschedule_job
+from . import telegram as tg
 
 # Reuse existing platform routing logic from the scrapers package.
 from ..scrapers import HOTEL_PLATFORMS, SCRAPERS, get_platform_from_url
@@ -90,6 +91,8 @@ def create_job(
         kind=kind,
         url=payload.url,
         email=payload.email,
+        webhook_url=payload.webhook_url,
+        telegram_chat_id=payload.telegram_chat_id,
         alert_type=payload.alert_type,
         threshold=payload.threshold,
         platform=platform,
@@ -128,6 +131,37 @@ def stop_job(
     unschedule_job(job.id)
     return job
 
+
+# ---- Telegram --------------------------------------------------------------
+
+@router.get("/telegram/status")
+def telegram_status(_user: str = Depends(require_user)) -> dict:
+    configured = tg.is_configured()
+    return {
+        "configured": configured,
+        "bot_username": tg.bot_username() if configured else None,
+    }
+
+
+@router.post("/telegram/start-pairing")
+def telegram_start_pairing(_user: str = Depends(require_user)) -> dict:
+    if not tg.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="telegram bot not configured",
+        )
+    return tg.start_pairing()
+
+
+@router.get("/telegram/pairing/{token}")
+def telegram_pairing_status(
+    token: str,
+    _user: str = Depends(require_user),
+) -> dict:
+    return tg.pairing_status(token)
+
+
+# ---- Events -----------------------------------------------------------------
 
 @router.get("/events/recent", response_model=list[EventOut])
 def recent_events(

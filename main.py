@@ -4,68 +4,48 @@ import time
 from src.cli import get_user_input
 from src.utils.driver import create_driver
 from src.utils.email import send_email
-from src.scrapers import (
-    route_scraper, 
-    is_hotel_platform, 
-    get_platform_from_url,
-    SCRAPERS,
-    scan_hotel_prices_monthly,
-    format_price_report,
-    find_best_prices
-)
+from src.scrapers import route_scraper, is_hotel_platform
 
 
 def run_hotel_tracking(url, price_threshold, email, driver):
-    """Hotel-specific tracking: scan next 30 days, check once per day"""
-    platform = get_platform_from_url(url)
-    scraper = SCRAPERS.get(platform)
-    
-    if not scraper:
-        print(f"Unsupported hotel platform: {platform}")
-        return
-    
+    """Single-date hotel tracking. The user-supplied URL has checkin/checkout
+    baked in; we scrape that one stay every 3 hours until the threshold is met."""
     sent = False
-    
+
     while not sent:
-        print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting hotel price scan...")
-        
-        # Scan prices for next 30 days
-        results = scan_hotel_prices_monthly(driver, url, platform, scraper, days=30)
-        
-        if not results:
-            print("Failed to scan hotel prices.")
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"\n[{now}] Scraping hotel price…")
+
+        result = route_scraper(driver, url)
+        if not result:
+            print("Failed to scrape hotel info.")
         else:
-            # Get hotel name from first successful result
-            hotel_name = next((r.get('hotel_name') for r in results if r.get('hotel_name')), 'Hotel')
-            
-            # Print summary report
-            report = format_price_report(results, hotel_name)
-            print(report)
-            
-            # Check if any date meets the price threshold
-            if price_threshold:
-                best_prices = find_best_prices(results, top_n=5)
-                matching_dates = [r for r in results if r.get('price') and r['price'] <= price_threshold]
-                
-                if matching_dates:
-                    alert_msg = f"🔔 {hotel_name} - Found {len(matching_dates)} dates below ₹{price_threshold:,.0f}:\n\n"
-                    for r in matching_dates[:10]:
-                        alert_msg += f"  {r['date']} ({r['day']}): ₹{r['price']:,.0f}\n"
-                    alert_msg += f"\nURL: {url}"
-                    
-                    print(f"\n{alert_msg}")
-                    send_email("Hotel Price Alert", alert_msg, email)
-                    sent = True
-                else:
-                    if best_prices:
-                        print(f"\nLowest price found: ₹{best_prices[0]['price']:,.0f} on {best_prices[0]['date']}")
-                        print(f"Target price: ₹{price_threshold:,.0f}")
-                    print("No dates below target price yet.")
-        
+            title = result.get('title') or 'Hotel'
+            price_str = result.get('price')
+            availability = result.get('stock_status', 'unknown')
+            print(f"{title} — price={price_str} availability={availability}")
+
+            if price_threshold and price_str:
+                try:
+                    price_num = float(str(price_str).replace('₹', '').replace(',', '').strip())
+                    if price_num <= price_threshold:
+                        msg = (
+                            f"🔔 {title}\n"
+                            f"Price ₹{price_num:,.0f} is at or below your threshold of ₹{price_threshold:,.0f}.\n\n"
+                            f"URL: {url}"
+                        )
+                        send_email("Hotel Price Alert", msg, email)
+                        print(msg)
+                        sent = True
+                    else:
+                        print(f"Above threshold (₹{price_threshold:,.0f}); will retry.")
+                except ValueError as e:
+                    print(f"Could not parse price: {e}")
+
         if not sent:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"\n[{now}] Next scan in 3 hours (Ctrl+C to stop)...")
-            time.sleep(10800)  # 3 hours
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            print(f"[{now}] Sleeping 3h (Ctrl+C to stop)…")
+            time.sleep(10800)
 
 
 def run_product_tracking(url, alert_type, price_threshold, email, driver):
@@ -119,9 +99,8 @@ def main():
     driver = create_driver()
 
     try:
-        # Check if this is a hotel URL
         if is_hotel_platform(url):
-            print("\n🏨 Hotel detected - will scan prices for next 30 days, checking every 3 hours")
+            print("\n🏨 Hotel detected — scraping the date in your URL every 3 hours")
             run_hotel_tracking(url, price_threshold, email, driver)
         else:
             print("\n📦 Product detected - checking hourly")

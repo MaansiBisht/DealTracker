@@ -11,7 +11,7 @@
 
 ### **An ops console for the deals you're too lazy to refresh**
 
-📦 **products** · 🏨 **hotels** · 💌 **email alerts** · 🤖 **headless Chromium** · 📡 **live ticks via SSE**
+📦 **products** · 🏨 **hotels** · 💌 **email** · 🪝 **webhook** · 🤖 **headless Chromium** · 📡 **live ticks via SSE**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -59,8 +59,9 @@ Amazon, Flipkart, Myntra, Amul, Amazfit.
 
 ### 🏨 Hotel deals
 
-Scans the **next 30 days** every cycle. Find the cheapest night for
-your trip without manually checking each date.
+Drop a Booking/Agoda/MakeMyTrip/Goibibo URL with your check-in dates
+baked in — we'll re-scrape that exact stay every 3 hours and email you
+when the rate falls below your target.
 
 </td>
 </tr>
@@ -83,10 +84,11 @@ the whole infra story.
 </td>
 <td valign="top">
 
-### 🛡️ Yours, not ours
+### 🪝 Webhook delivery
 
-Self-hosted. Your URLs and email never leave your VPS. SQLite file
-on disk you can `cp` and back up.
+Paste any webhook URL — n8n, Zapier, IFTTT, Make.com, Discord, Slack,
+or a Telegram bot bridge — and we POST a JSON payload on every alert.
+Toggle email and webhook independently per watch.
 
 </td>
 </tr>
@@ -218,6 +220,42 @@ Every knob is an env var. Real defaults live in `.env.example`.
 > account password since 2022. Two-factor authentication + an App
 > Password is the official path. It's also revocable from one screen.
 
+### 🪝 Webhook payload
+
+When a watch alerts, the server POSTs the following JSON body to
+your webhook URL. `Content-Type: application/json`, 8s timeout,
+no auth header — bring your own auth via the URL path or query if
+your bridge needs it.
+
+```json
+{
+  "type": "dealtracker.alert",
+  "ts": "2026-05-10T13:30:09.876+00:00",
+  "reason": "price ₹156.00 ≤ threshold ₹1,000.00",
+  "job": {
+    "id": "e185e0a09a604d5ea5f186975ead997e",
+    "kind": "product",
+    "platform": "amazon",
+    "url": "https://www.amazon.in/dp/B08BPQ9CZ1",
+    "alert_type": "price",
+    "threshold": 1000,
+    "last_status": "in stock",
+    "last_price": "₹156.00"
+  }
+}
+```
+
+Common bridges:
+- **Telegram**: spin up a bot via [@BotFather], expose its
+  `/sendMessage` via an n8n / Make.com / Pipedream webhook, paste that
+  URL here.
+- **Discord / Slack**: their incoming webhook URLs work directly if
+  you wrap the payload through a small bridge that maps `reason` →
+  `content`/`text`.
+- **Custom**: any HTTPS endpoint that accepts a JSON POST.
+
+[@BotFather]: https://t.me/BotFather
+
 ---
 
 ## 🧱 Project structure
@@ -228,7 +266,7 @@ DealTracker/
 ├── src/
 │   ├── cli.py                 # CLI prompts
 │   ├── config.py              # env loader
-│   ├── 🕸️  scrapers/           # one file per site + 30-day hotel scanner
+│   ├── 🕸️  scrapers/           # one file per site (products and hotels share the contract)
 │   ├── 🛠️  utils/              # Selenium driver, Gmail SMTP
 │   └── 🚀 server/              # FastAPI ops console
 │       ├── main.py            # uvicorn entrypoint, lifespan
@@ -281,9 +319,10 @@ It's three steps. The codebase already has 9 examples to copy from.
 <details>
 <summary><b>🏨 Hotel scraper</b></summary>
 
-Same shape, plus append `"newhotel"` to `HOTEL_PLATFORMS`. The runner
-will pick `scan_hotel_prices_monthly` instead of single-shot scraping.
-Returned dict adds `"type": "hotel"` and may include `"rating"`.
+Same shape, plus append `"newhotel"` to `HOTEL_PLATFORMS`. The user
+passes a URL with check-in/check-out dates already in the query string;
+your scraper just reads the price for that one date pair. Returned
+dict can add `"type": "hotel"` and `"rating"` if available.
 
 </details>
 

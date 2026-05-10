@@ -1,0 +1,266 @@
+"""Telegram delivery channel — Connect-button pairing, hidden chat_id.
+
+Operator wires a bot once via @BotFather and drops the token in
+TELEGRAM_BOT_TOKEN. The server long-polls Telegram's getUpdates so we
+don't need a public HTTPS endpoint.
+
+Pairing model (per watch):
+    1. UI hits POST /api/telegram/start-pairing → mints a one-time
+       token, stores it in telegram_pairings.
+    2. UI opens https://t.me/<bot_username>?start=<token>.
+    3. User taps Start in Telegram → "/start <token>" reaches the
+       poller, which fills chat_id + display_name on the row.
+    4. UI polls /api/telegram/pairing/{token} every 2s, picks up the
+       chat_id when it lands, submits the watch with it.
+
+Tokens are invisible to the user — they just see a Connect button and
+a "connected to <First Name>" confirmation. Multi-user routing works
+because each Connect click mints its own token, so different recipients
+just need to be the ones tapping Start.
+
+stdlib-only — uses urllib for outbound calls so we don't pull a new
+runtime dep just for Telegram.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import secrets
+import urllib.error
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+
+from sqlalchemy import delete
+
+from .db import SessionLocal
+from .models import TelegramPairing
+
+
+log = logging.getLogger("dealtracker.telegram")
+
+API_BASE = "https://api.telegram.org/bot{token}/{method}"
+PAIR_TOKEN_BYTES = 12
+START_RE = re.compile(r"^/start(?:@\w+)?\s+([A-Za-z0-9_-]{6,64})\s*$")
+
+_last_update_id: int = 0
+
+
+def _token() -> Optional[str]:
+    t = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    return t or None
+
+
+def is_configured() -> bool:
+    return _token() is not None
+
+
+def bot_username() -> Optional[str]:
+    cached = getattr(bot_username, "_cached", None)
+    if cached:
+        return cached
+    explicit = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+    if explicit:
+        bot_username._cached = explicit  # type: ignore[attr-defined]
+        return explicit
+    if not is_configured():
+        return None
+    try:
+        me = _call("getMe")
+        username = me.get("result", {}).get("username")
+        if username:
+            bot_username._cached = username  # type: ignore[attr-defined]
+            return username
+    except Exception as e:
+        log.warning("getMe failed: %s", e)
+    return None
+
+
+def _call(method: str, payload: dict[str, Any] | None = None, *, timeout: int = 10) -> dict[str, Any]:
+    token = _token()
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+
+    url = API_BASE.format(token=token, method=method)
+    data = json.dumps(payload or {}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode("utf-8"))
+        except Exception:
+            body = {"ok": False, "description": f"HTTP {e.code}"}
+    if not body.get("ok"):
+        raise RuntimeError(f"telegram {method} failed: {body.get('description')}")
+    return body
+
+
+def send_message(chat_id: str, text: str) -> None:
+    _call(
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        },
+    )
+
+
+# ---------- pairing -----------------------------------------------------------
+
+def start_pairing() -> dict[str, str]:
+    """Mint a fresh pair token and return the deep-link URL for the UI."""
+    if not is_configured():
+        raise RuntimeError("Telegram bot not configured")
+
+    token = secrets.token_urlsafe(PAIR_TOKEN_BYTES)
+    with SessionLocal() as db:
+        db.add(TelegramPairing(token=token))
+        db.commit()
+
+    username = bot_username() or "your_bot"
+    return {
+        "token": token,
+        "deep_link": f"https://t.me/{username}?start={token}",
+    }
+
+
+def pairing_status(token: str) -> dict[str, Any]:
+    """Polled by the UI — returns chat_id once the user has tapped Start."""
+    with SessionLocal() as db:
+        row = db.get(TelegramPairing, token)
+        if row is None:
+            return {"paired": False, "exists": False, "chat_id": None, "display_name": None}
+        return {
+            "paired": row.chat_id is not None,
+            "exists": True,
+            "chat_id": row.chat_id,
+            "display_name": row.display_name,
+        }
+
+
+def _attempt_pair(token: str, chat_id: str, display_name: Optional[str]) -> bool:
+    with SessionLocal() as db:
+        row = db.get(TelegramPairing, token)
+        if row is None:
+            return False
+        if row.chat_id is None:
+            row.chat_id = chat_id
+            row.display_name = display_name
+            row.paired_at = datetime.now(timezone.utc)
+            db.commit()
+        return True
+
+
+def prune_pairings(older_than_minutes: int = 60) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=older_than_minutes)
+    with SessionLocal() as db:
+        result = db.execute(
+            delete(TelegramPairing).where(TelegramPairing.created_at < cutoff)
+        )
+        db.commit()
+        return result.rowcount or 0
+
+
+# ---------- long-poll worker ---------------------------------------------------
+
+def poll_updates(timeout: int = 0) -> int:
+    """Process incoming /start messages — both /start <token> and bare /start."""
+    global _last_update_id
+    if not is_configured():
+        return 0
+
+    try:
+        body = _call(
+            "getUpdates",
+            {
+                "offset": _last_update_id + 1,
+                "timeout": timeout,
+                "allowed_updates": ["message"],
+            },
+            timeout=timeout + 5,
+        )
+    except Exception as e:
+        log.warning("getUpdates failed: %s", e)
+        return 0
+
+    updates = body.get("result", []) or []
+    handled = 0
+
+    for update in updates:
+        update_id = update.get("update_id", 0)
+        if update_id > _last_update_id:
+            _last_update_id = update_id
+
+        msg = update.get("message") or {}
+        text = (msg.get("text") or "").strip()
+        chat = msg.get("chat") or {}
+        chat_id = chat.get("id")
+        if not chat_id:
+            continue
+
+        from_ = msg.get("from") or {}
+        first_name = from_.get("first_name") or chat.get("first_name") or "there"
+        full_name = " ".join(filter(None, [from_.get("first_name"), from_.get("last_name")])) or first_name
+
+        m = START_RE.match(text)
+        if m:
+            # /start <token> — pair this chat to the matching watch flow.
+            token = m.group(1)
+            if _attempt_pair(token, str(chat_id), full_name):
+                handled += 1
+                _safe_reply(
+                    chat_id,
+                    f"✅ paired with *DealTracker*. {first_name}, you'll receive alerts here.",
+                )
+            else:
+                _safe_reply(
+                    chat_id,
+                    "⚠️ that link has expired — open the watch form again and "
+                    "tap *Connect Telegram*.",
+                )
+            continue
+
+        if text.startswith("/start"):
+            # Bare /start — no pairing context. Tell them what to do AND
+            # give them their chat_id as a manual fallback.
+            handled += 1
+            _safe_reply(
+                chat_id,
+                f"👋 Hi {first_name}, this is *DealTracker*.\n\n"
+                f"Your chat ID is `{chat_id}`.\n\n"
+                "To receive alerts here, open the watch form on the website "
+                "and tap *Connect Telegram*. Alternatively, paste the chat "
+                "ID above into the *Advanced* section of the form.",
+            )
+
+    return handled
+
+
+def _safe_reply(chat_id: int | str, text: str) -> None:
+    try:
+        send_message(str(chat_id), text)
+    except Exception as e:
+        log.warning("reply to %s failed: %s", chat_id, e)
+
+
+__all__ = [
+    "is_configured",
+    "bot_username",
+    "send_message",
+    "start_pairing",
+    "pairing_status",
+    "poll_updates",
+    "prune_pairings",
+]

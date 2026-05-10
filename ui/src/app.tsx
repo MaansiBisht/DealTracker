@@ -43,7 +43,7 @@ function TopBar({ view, onChangeView }: { view: View; onChangeView: (v: View) =>
 function Footer({ view }: { view: View }) {
   const tickRate =
     view === 'hotels'
-      ? 'tick rate · 3h hotels · 30-day scan'
+      ? 'tick rate · 3h hotels'
       : 'tick rate · 1h products';
   return (
     <footer className="hairline-t mt-12">

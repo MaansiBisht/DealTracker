@@ -50,7 +50,64 @@ def get_session() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create all tables. Models are registered via side-effect import."""
+    """Create all tables, then run idempotent migrations for existing DBs."""
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate_jobs_for_v2_channels()
+
+
+def _migrate_jobs_for_v2_channels() -> None:
+    """Add webhook_url + relax email NOT NULL on the jobs table.
+
+    Idempotent: safe to run on every boot. Fresh DBs are produced by
+    create_all already matching the v2 schema; only legacy DBs with
+    NOT NULL email + no webhook_url need actual work.
+    """
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "jobs" not in insp.get_table_names():
+        return
+
+    cols = {c["name"]: c for c in insp.get_columns("jobs")}
+
+    # Step 1: add new nullable columns — SQLite supports ALTER ADD COLUMN.
+    if "webhook_url" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN webhook_url TEXT"))
+    if "telegram_chat_id" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN telegram_chat_id VARCHAR(32)"))
+
+    # `telegram_pairings` is created automatically by Base.metadata.create_all.
+    # Old `notify_telegram` column may exist on legacy DBs (SQLite can't drop
+    # columns easily); the ORM no longer references it, so it's a harmless
+    # orphan and we leave it in place.
+
+    # Step 2: relax email NOT NULL on legacy tables. SQLite can't change
+    # an existing column's nullability, so recreate the table once.
+    insp_again = inspect(engine)
+    email_col = {c["name"]: c for c in insp_again.get_columns("jobs")}.get("email", {})
+    if email_col.get("nullable") is False:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE jobs RENAME TO jobs_legacy_v1"))
+        Base.metadata.create_all(bind=engine)
+        with engine.begin() as conn:
+            conn.execute(text(
+                """
+                INSERT INTO jobs (
+                    id, kind, url, email, webhook_url, alert_type, threshold,
+                    platform, status,
+                    last_status, last_price, last_checked_at, alerted_at,
+                    active, created_at
+                )
+                SELECT
+                    id, kind, url, email, NULL, alert_type, threshold,
+                    platform, status,
+                    last_status, last_price, last_checked_at, alerted_at,
+                    active, created_at
+                FROM jobs_legacy_v1
+                """
+            ))
+            conn.execute(text("DROP TABLE jobs_legacy_v1"))

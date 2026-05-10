@@ -60,12 +60,18 @@ def scrape_booking(driver, url):
                     price = price_clean
                     break
 
-    # Check availability
-    sold_out = soup.find(string=re.compile(r'sold out|no availability|unavailable', re.IGNORECASE))
-    if sold_out:
-        availability = "sold out"
-    elif price:
+    # If we extracted a price the hotel is bookable on this date.
+    # Otherwise look for an unambiguous "no rooms" container — body-wide
+    # text search picks up "sold out" from sidebars/recommendations and
+    # falsely flags an available hotel.
+    if price:
         availability = "available"
+    else:
+        no_rooms = soup.find(
+            ['div', 'span'],
+            string=re.compile(r'^\s*(sold out|no rooms available|unavailable)\s*$', re.IGNORECASE),
+        )
+        availability = "sold out" if no_rooms else "unknown"
 
     # Try to get rating
     rating = None

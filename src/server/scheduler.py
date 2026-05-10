@@ -26,6 +26,7 @@ from sqlalchemy import select
 from .db import SessionLocal
 from .models import Job
 from .runner import run_tick
+from . import telegram as tg
 
 
 log = logging.getLogger("dealtracker.scheduler")
@@ -41,7 +42,13 @@ def get_scheduler() -> BackgroundScheduler:
     if _scheduler is None:
         _scheduler = BackgroundScheduler(
             jobstores={"default": MemoryJobStore()},
-            executors={"default": ThreadPoolExecutor(max_workers=1)},
+            # Two pools: one for Selenium scrapes (single-threaded — Selenium
+            # isn't safe to share). One small pool for I/O-bound housekeeping
+            # like Telegram long-polls so they don't queue behind a scrape.
+            executors={
+                "default": ThreadPoolExecutor(max_workers=1),
+                "io": ThreadPoolExecutor(max_workers=2),
+            },
             job_defaults={
                 "coalesce": True,
                 "max_instances": 1,
@@ -58,6 +65,34 @@ def start() -> None:
         sch.start()
         log.info("scheduler started · product=%ss hotel=%ss", PRODUCT_INTERVAL, HOTEL_INTERVAL)
     _reschedule_active_jobs()
+    _maybe_schedule_telegram()
+
+
+def _maybe_schedule_telegram() -> None:
+    """Wire Telegram long-poll + pairing GC if the bot token is set."""
+    if not tg.is_configured():
+        log.info("telegram channel disabled (TELEGRAM_BOT_TOKEN not set)")
+        return
+
+    sch = get_scheduler()
+    sch.add_job(
+        tg.poll_updates,
+        trigger="interval",
+        seconds=4,
+        id="telegram-poll",
+        executor="io",
+        replace_existing=True,
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+    sch.add_job(
+        tg.prune_pairings,
+        trigger="interval",
+        minutes=15,
+        id="telegram-prune-pairings",
+        executor="io",
+        replace_existing=True,
+    )
+    log.info("telegram poller scheduled (every 4s)")
 
 
 def shutdown() -> None:

@@ -8,10 +8,13 @@ the SSE bus (step 5) will fan out to the terminal pane.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import traceback
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,14 +25,10 @@ from .events import bus
 from .models import Event, Job
 
 # Reuse existing scraper machinery.
-from ..scrapers import (
-    SCRAPERS,
-    is_hotel_platform,
-    route_scraper,
-    scan_hotel_prices_monthly,
-)
+from ..scrapers import route_scraper
 from ..utils.driver import create_driver
 from ..utils.email import send_email
+from . import telegram as tg
 
 
 log = logging.getLogger("dealtracker.runner")
@@ -78,19 +77,17 @@ def run_tick(job_id: str) -> None:
 # ---------- scraping -----------------------------------------------------------
 
 def _do_scrape(job: Job) -> dict[str, Any]:
+    """Single scrape pass — works for both products and hotels.
+
+    Hotel URLs already carry checkin/checkout in the query string, so
+    we scrape that one date pair, not 30 days.
+    """
     driver = create_driver()
     try:
-        if is_hotel_platform(job.url):
-            scraper = SCRAPERS.get(job.platform)
-            if scraper is None:
-                raise RuntimeError(f"no scraper registered for hotel platform {job.platform}")
-            results = scan_hotel_prices_monthly(driver, job.url, job.platform, scraper, days=30)
-            return {"kind": "hotel", "results": results or []}
-
-        product = route_scraper(driver, job.url)
-        if product is None:
+        result = route_scraper(driver, job.url)
+        if result is None:
             raise RuntimeError("scraper returned no result")
-        return {"kind": "product", **product}
+        return result
     finally:
         try:
             driver.quit()
@@ -101,13 +98,8 @@ def _do_scrape(job: Job) -> dict[str, Any]:
 # ---------- result handling ----------------------------------------------------
 
 def _process_result(db: Session, job: Job, result: dict[str, Any]) -> None:
-    if result["kind"] == "product":
-        _process_product(db, job, result)
-    elif result["kind"] == "hotel":
-        _process_hotel(db, job, result)
-
-
-def _process_product(db: Session, job: Job, result: dict[str, Any]) -> None:
+    """Single-shot result handler. Works for both products and hotels —
+    they share the same {price, stock_status, title?} contract."""
     stock_status = (result.get("stock_status") or "unknown").lower()
     raw_price = result.get("price")
     job.last_status = stock_status
@@ -118,56 +110,51 @@ def _process_product(db: Session, job: Job, result: dict[str, Any]) -> None:
     )
 
     if job.alert_type == "stock":
-        if stock_status == "in stock":
+        # Products only — "in stock" wording.
+        if "in stock" in stock_status:
             _alert(db, job, f"in stock · {_human_price(job.last_price)}")
-    elif job.alert_type == "price":
-        price_num = _parse_price(raw_price)
-        if price_num is None or job.threshold is None:
-            return
-        if price_num <= job.threshold:
-            _alert(
-                db, job,
-                f"price ₹{price_num:,.2f} ≤ threshold ₹{job.threshold:,.2f}",
-            )
-
-
-def _process_hotel(db: Session, job: Job, result: dict[str, Any]) -> None:
-    rows: list[dict[str, Any]] = result.get("results", [])
-    priced = [r for r in rows if r.get("price") is not None]
-    if not priced:
-        job.last_status = "no rooms found"
-        _emit(db, job, "tick_result", f"scanned {len(rows)} dates · no rooms")
         return
 
-    best = min(priced, key=lambda r: r["price"])
-    best_price = float(best["price"])
-    best_date = best.get("date", "?")
-
-    job.last_price = f"{best_price:.0f}"
-    job.last_status = f"best ₹{best_price:,.0f} on {best_date}"
-
-    _emit(
-        db, job, "tick_result",
-        f"scanned {len(rows)} dates · best=₹{best_price:,.0f} on {best_date}",
-    )
-
-    if job.threshold is None:
+    # price (products) and price_drop (hotels) share the same comparison.
+    price_num = _parse_price(raw_price)
+    if price_num is None or job.threshold is None:
         return
-
-    matches = [r for r in priced if float(r["price"]) <= job.threshold]
-    if matches:
-        msg = (
-            f"{len(matches)} dates ≤ ₹{job.threshold:,.0f}, "
-            f"lowest ₹{best_price:,.0f} on {best_date}"
+    if price_num <= job.threshold:
+        label = "price drop" if job.kind == "hotel" else "price"
+        _alert(
+            db, job,
+            f"{label} ₹{price_num:,.2f} ≤ threshold ₹{job.threshold:,.2f}",
         )
-        _alert(db, job, msg)
 
 
 def _alert(db: Session, job: Job, reason: str) -> None:
+    """Mark the job alerted, then fan out to each configured channel.
+
+    Both email and webhook can fire on the same alert — each is
+    independent, each emits its own success/failure event so the
+    operator log shows exactly what got through.
+    """
     job.status = "alerted"
     job.alerted_at = _now()
     job.active = False
 
+    delivered_anywhere = False
+
+    if job.email:
+        delivered_anywhere |= _deliver_email(db, job, reason)
+    if job.webhook_url:
+        delivered_anywhere |= _deliver_webhook(db, job, reason)
+    if job.telegram_chat_id:
+        delivered_anywhere |= _deliver_telegram(db, job, reason)
+
+    if not delivered_anywhere:
+        # Alert state is correct (condition was met) even if every
+        # channel rejected; surface that loudly.
+        _emit(db, job, "alert", f"ALERT (all channels failed) — {reason}")
+
+
+def _deliver_email(db: Session, job: Job, reason: str) -> bool:
+    """Email channel — primary recipient with a configurable fallback."""
     body = (
         f"DealTracker alert\n\n"
         f"Reason: {reason}\n"
@@ -176,46 +163,122 @@ def _alert(db: Session, job: Job, reason: str) -> None:
     )
     subject = f"DealTracker · {job.platform} alert"
 
-    # Primary delivery: address entered on the watch.
     try:
         send_email(subject=subject, body=body, recipient_email=job.email)
         _emit(db, job, "alert", f"ALERT EMAIL SENT to {job.email} — {reason}")
-        return
+        return True
     except Exception as primary_err:
         _emit(
             db, job, "error",
-            f"primary delivery to {job.email} failed: {type(primary_err).__name__}: {primary_err}",
+            f"email delivery to {job.email} failed: {type(primary_err).__name__}: {primary_err}",
         )
-        log.warning(
-            "primary email failed for job %s: %s",
-            job.id, traceback.format_exc(),
-        )
+        log.warning("primary email failed for job %s: %s", job.id, traceback.format_exc())
 
-    # Fallback delivery: if configured and different from primary.
     if FALLBACK_EMAIL and FALLBACK_EMAIL.lower() != (job.email or "").lower():
-        fallback_body = (
-            body
-            + f"\n[fallback delivery — primary recipient {job.email} did not accept the message]\n"
-        )
+        fallback_body = body + f"\n[fallback delivery — primary {job.email} did not accept]\n"
         try:
             send_email(subject=subject, body=fallback_body, recipient_email=FALLBACK_EMAIL)
-            _emit(
-                db, job, "alert",
-                f"ALERT EMAIL SENT to fallback {FALLBACK_EMAIL} — {reason}",
-            )
-            return
+            _emit(db, job, "alert", f"ALERT EMAIL SENT to fallback {FALLBACK_EMAIL} — {reason}")
+            return True
         except Exception as fb_err:
             _emit(
                 db, job, "error",
-                f"fallback delivery to {FALLBACK_EMAIL} failed: {type(fb_err).__name__}: {fb_err}",
+                f"fallback email to {FALLBACK_EMAIL} failed: {type(fb_err).__name__}: {fb_err}",
             )
-            log.warning(
-                "fallback email failed for job %s: %s",
-                job.id, traceback.format_exc(),
-            )
+            log.warning("fallback email failed for job %s: %s", job.id, traceback.format_exc())
 
-    # Alert state is correct (condition was met) even if no email got through.
-    _emit(db, job, "alert", f"ALERT (all email delivery failed) — {reason}")
+    return False
+
+
+def _deliver_webhook(db: Session, job: Job, reason: str) -> bool:
+    """Generic outbound webhook — POSTs a JSON payload with timeout=8s.
+
+    Payload is intentionally flat and bridge-friendly (n8n, Zapier,
+    IFTTT, custom Telegram bots, etc.) so any of those can pluck the
+    fields they need without parsing nested structures.
+    """
+    payload = {
+        "type": "dealtracker.alert",
+        "ts": _now().isoformat(),
+        "reason": reason,
+        "job": {
+            "id": job.id,
+            "kind": job.kind,
+            "platform": job.platform,
+            "url": job.url,
+            "alert_type": job.alert_type,
+            "threshold": job.threshold,
+            "last_status": job.last_status,
+            "last_price": job.last_price,
+        },
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        job.webhook_url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "DealTracker/0.0.1",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            status = resp.status
+        if 200 <= status < 300:
+            _emit(
+                db, job, "alert",
+                f"WEBHOOK POSTED ({status}) to {_redact_url(job.webhook_url)} — {reason}",
+            )
+            return True
+        _emit(
+            db, job, "error",
+            f"webhook to {_redact_url(job.webhook_url)} returned status {status}",
+        )
+        return False
+    except urllib.error.HTTPError as e:
+        _emit(
+            db, job, "error",
+            f"webhook to {_redact_url(job.webhook_url)} HTTP {e.code}: {e.reason}",
+        )
+    except Exception as e:
+        _emit(
+            db, job, "error",
+            f"webhook to {_redact_url(job.webhook_url)} failed: {type(e).__name__}: {e}",
+        )
+        log.warning("webhook delivery failed for job %s: %s", job.id, traceback.format_exc())
+    return False
+
+
+def _deliver_telegram(db: Session, job: Job, reason: str) -> bool:
+    """Send the alert to the chat ID attached to this watch."""
+    if not tg.is_configured():
+        _emit(db, job, "error", "telegram channel selected but bot is not configured")
+        return False
+
+    text = (
+        f"🔔 *DealTracker* — {job.platform}\n"
+        f"{reason}\n"
+        f"{job.url}"
+    )
+    try:
+        tg.send_message(job.telegram_chat_id, text)
+        _emit(db, job, "alert", f"TELEGRAM SENT to chat {job.telegram_chat_id} — {reason}")
+        return True
+    except Exception as e:
+        _emit(db, job, "error", f"telegram delivery failed: {type(e).__name__}: {e}")
+        log.warning("telegram failed for job %s: %s", job.id, traceback.format_exc())
+        return False
+
+
+def _redact_url(url: str | None) -> str:
+    """Trim webhook URL for log lines — many bridge URLs include secrets in the path."""
+    if not url:
+        return "?"
+    if len(url) > 60:
+        return url[:40] + "…" + url[-12:]
+    return url
 
 
 # ---------- helpers ------------------------------------------------------------

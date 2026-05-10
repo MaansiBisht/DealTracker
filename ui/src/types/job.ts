@@ -14,7 +14,9 @@ export interface Job {
   id: string;
   kind: JobKind;
   url: string;
-  email: string;
+  email: string | null;
+  webhook_url: string | null;
+  telegram_chat_id: string | null;
   alert_type: AlertType;
   threshold: number | null;
   platform: string;
@@ -31,9 +33,28 @@ export interface Job {
 
 export interface JobCreatePayload {
   url: string;
-  email: string;
+  email: string | null;
+  webhook_url: string | null;
+  telegram_chat_id: string | null;
   alert_type: AlertType;
   threshold: number | null;
+}
+
+export interface TelegramStatus {
+  configured: boolean;
+  bot_username: string | null;
+}
+
+export interface TelegramPairingResponse {
+  token: string;
+  deep_link: string;
+}
+
+export interface TelegramPairingStatus {
+  paired: boolean;
+  exists: boolean;
+  chat_id: string | null;
+  display_name: string | null;
 }
 
 export type EventKind =

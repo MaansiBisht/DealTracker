@@ -1,7 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ApiError } from '~/lib/api';
-import type { AlertType, JobCreatePayload, JobKind } from '~/types/job';
+import { ApiError, api } from '~/lib/api';
+import type {
+  AlertType,
+  JobCreatePayload,
+  JobKind,
+  TelegramStatus,
+} from '~/types/job';
 
 interface Props {
   view: JobKind;
@@ -16,7 +21,13 @@ export function WatchForm({ view, onSubmit }: Props) {
   const alertOptions = isHotel ? HOTEL_ALERTS : PRODUCT_ALERTS;
 
   const [url, setUrl] = useState('');
+  // Per-watch routing: every product can target a different Telegram chat.
+  // The Connect button hides the chat_id behind a token-pairing flow.
+  const [emailEnabled, setEmailEnabled] = useState(false);
   const [email, setEmail] = useState('');
+  const [tgEnabled, setTgEnabled] = useState(true);
+  const [tgChatId, setTgChatId] = useState('');
+  const [tgDisplayName, setTgDisplayName] = useState<string | null>(null);
   const [alertType, setAlertType] = useState<AlertType>(alertOptions[0]);
   const [threshold, setThreshold] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -24,18 +35,39 @@ export function WatchForm({ view, onSubmit }: Props) {
 
   const needsThreshold = alertType === 'price' || alertType === 'price_drop';
 
-  // Reset alert type when the tab flips so the dropdown stays valid.
   if (!alertOptions.includes(alertType)) {
     setAlertType(alertOptions[0]);
   }
+
+  const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null);
+  useEffect(() => {
+    api
+      .telegramStatus()
+      .then(setTgStatus)
+      .catch(() => setTgStatus({ configured: false, bot_username: null }));
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
+    const trimmedEmail = emailEnabled ? email.trim() : '';
+    const trimmedChat = tgEnabled ? tgChatId.trim() : '';
+
+    if (!trimmedEmail && !trimmedChat) {
+      setError('enable at least one delivery channel');
+      return;
+    }
+    if (trimmedChat && !/^-?\d+$/.test(trimmedChat)) {
+      setError('telegram chat ID must be a number — message the bot to grab yours');
+      return;
+    }
+
     const payload: JobCreatePayload = {
       url: url.trim(),
-      email: email.trim(),
+      email: trimmedEmail || null,
+      webhook_url: null,
+      telegram_chat_id: trimmedChat || null,
       alert_type: alertType,
       threshold: needsThreshold ? parseFloat(threshold) : null,
     };
@@ -50,6 +82,8 @@ export function WatchForm({ view, onSubmit }: Props) {
       setUrl('');
       setEmail('');
       setThreshold('');
+      // Keep tgChatId + display name so a follow-up watch reuses the
+      // pairing without making the user tap Start again.
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'submit failed');
     } finally {
@@ -70,14 +104,16 @@ export function WatchForm({ view, onSubmit }: Props) {
         onChange={setUrl}
         required
       />
+
       <div className="grid grid-cols-[2fr_1fr] gap-px">
-        <Field
-          label="Notify email"
+        <ToggleField
+          label="notify email"
+          checked={emailEnabled}
+          onToggle={setEmailEnabled}
           placeholder="you@example.com"
           value={email}
           onChange={setEmail}
           type="email"
-          required
         />
         <SelectField
           label="Alert"
@@ -86,6 +122,23 @@ export function WatchForm({ view, onSubmit }: Props) {
           onChange={(v) => setAlertType(v as AlertType)}
         />
       </div>
+
+      <TelegramToggle
+        status={tgStatus}
+        enabled={tgEnabled}
+        onToggle={setTgEnabled}
+        chatId={tgChatId}
+        displayName={tgDisplayName}
+        onPaired={(chatId, name) => {
+          setTgChatId(chatId);
+          setTgDisplayName(name);
+        }}
+        onChatIdChange={(v) => {
+          setTgChatId(v);
+          setTgDisplayName(null);
+        }}
+      />
+
       <div className="grid grid-cols-[1fr_auto] gap-px">
         <Field
           label="Threshold"
@@ -114,6 +167,177 @@ export function WatchForm({ view, onSubmit }: Props) {
     </form>
   );
 }
+
+
+/* ---------- Telegram Connect-button toggle ------------------------------- */
+
+interface TelegramToggleProps {
+  status: TelegramStatus | null;
+  enabled: boolean;
+  onToggle: (v: boolean) => void;
+  chatId: string;
+  displayName: string | null;
+  onPaired: (chatId: string, displayName: string | null) => void;
+  onChatIdChange: (v: string) => void;
+}
+
+function TelegramToggle({
+  status,
+  enabled,
+  onToggle,
+  chatId,
+  displayName,
+  onPaired,
+  onChatIdChange,
+}: TelegramToggleProps) {
+  const configured = status?.configured ?? false;
+  const [pairing, setPairing] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  function stopPolling() {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+  useEffect(() => stopPolling, []);
+
+  async function startConnect() {
+    setError(null);
+    setPairing(true);
+    try {
+      const { token, deep_link } = await api.telegramStartPairing();
+      window.open(deep_link, '_blank', 'noopener');
+      pollRef.current = window.setInterval(async () => {
+        try {
+          const s = await api.telegramPairingStatus(token);
+          if (s.paired && s.chat_id) {
+            stopPolling();
+            setPairing(false);
+            onPaired(s.chat_id, s.display_name);
+          }
+        } catch {
+          // ignore transient poll failures — keep polling.
+        }
+      }, 2000);
+    } catch (e) {
+      setPairing(false);
+      setError(e instanceof ApiError ? e.message : 'could not start pairing');
+    }
+  }
+
+  function disconnect() {
+    stopPolling();
+    setPairing(false);
+    onPaired('', null);
+    onChatIdChange('');
+  }
+
+  if (!configured) {
+    return (
+      <div className="bg-surface px-4 py-3 flex flex-col gap-1 opacity-60">
+        <span className="chrome-label flex items-center gap-2">
+          <CheckBox checked={false} />
+          notify telegram
+          <span className="text-mute normal-case tracking-normal">
+            — disabled · operator hasn't set TELEGRAM_BOT_TOKEN
+          </span>
+        </span>
+      </div>
+    );
+  }
+
+  const inactive = !enabled;
+  return (
+    <div
+      className={`
+        bg-surface px-4 py-3 flex flex-col gap-2
+        transition-colors
+        ${inactive ? 'opacity-60' : 'hover:bg-elevated focus-within:bg-elevated'}
+      `}
+    >
+      <button
+        type="button"
+        onClick={() => onToggle(!enabled)}
+        className="chrome-label flex items-center gap-2 self-start text-left cursor-pointer hover:text-fg transition-colors"
+      >
+        <CheckBox checked={enabled} />
+        <span>notify telegram</span>
+        <span className="text-mute normal-case tracking-normal">
+          — alerts go straight to a Telegram chat
+        </span>
+      </button>
+
+      {enabled && (
+        <div className="flex flex-col gap-1.5">
+          {chatId ? (
+            <div className="flex items-center gap-3 font-mono text-[13px]">
+              <span className="text-ok">
+                ✓ connected{displayName ? ` to ${displayName}` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={disconnect}
+                className="chrome-label tabular tracking-[0.18em] text-mute hover:text-err transition-colors"
+              >
+                [disconnect]
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={startConnect}
+                disabled={pairing}
+                className="
+                  bg-info text-bg
+                  hover:brightness-95 disabled:opacity-70 disabled:cursor-progress
+                  transition-[filter] duration-150
+                  h-9 px-4 font-mono text-[12px] tracking-[0.16em]
+                  focus-visible:outline-2 focus-visible:outline-fg focus-visible:outline-offset-[-2px]
+                "
+              >
+                {pairing ? '[ WAITING IN TELEGRAM… ]' : '[ CONNECT TELEGRAM ⇗ ]'}
+              </button>
+              {error && <span className="text-err text-[12.5px]">{error}</span>}
+            </div>
+          )}
+
+          {/* Advanced: paste a chat ID directly (for routing alerts to someone
+              else without making them click Start). */}
+          {!chatId && (
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="chrome-label text-mute hover:text-dim transition-colors text-left self-start"
+            >
+              {showAdvanced ? '↑ hide manual chat ID' : '↓ I already have a chat ID'}
+            </button>
+          )}
+          {showAdvanced && !chatId && (
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="paste chat ID, e.g. 987654321"
+              value={chatId}
+              onChange={(e) => onChatIdChange(e.target.value)}
+              className="
+                bg-transparent outline-none text-fg placeholder:text-mute
+                font-mono text-[14px] tabular
+                hairline-b pb-1
+              "
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ---------- shared field primitives --------------------------------------- */
 
 interface FieldProps {
   label: string;
@@ -150,6 +374,68 @@ function Field({ label, placeholder, value, onChange, type = 'text', required, d
   );
 }
 
+interface ToggleFieldProps {
+  label: string;
+  checked: boolean;
+  onToggle: (v: boolean) => void;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+}
+
+function ToggleField({
+  label,
+  checked,
+  onToggle,
+  placeholder,
+  value,
+  onChange,
+  type = 'text',
+}: ToggleFieldProps) {
+  const inactive = !checked;
+  return (
+    <div
+      className={`
+        group bg-surface px-4 py-3 flex flex-col gap-1
+        transition-colors
+        ${inactive ? 'opacity-60' : 'hover:bg-elevated focus-within:bg-elevated'}
+      `}
+    >
+      <button
+        type="button"
+        onClick={() => onToggle(!checked)}
+        className="chrome-label flex items-center gap-2 self-start text-left cursor-pointer hover:text-fg transition-colors"
+      >
+        <CheckBox checked={checked} />
+        <span>{label}</span>
+      </button>
+      <input
+        type={type}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={inactive}
+        className="bg-transparent outline-none text-fg placeholder:text-mute font-mono text-[14px] tabular disabled:cursor-not-allowed"
+      />
+    </div>
+  );
+}
+
+function CheckBox({ checked }: { checked: boolean }) {
+  return (
+    <span
+      className={`
+        inline-block w-3 h-3 hairline tabular text-[10px] leading-[10px] text-center
+        transition-colors
+        ${checked ? 'bg-ok text-bg' : 'bg-transparent text-transparent'}
+      `}
+    >
+      ×
+    </span>
+  );
+}
+
 interface SelectFieldProps {
   label: string;
   value: string;
@@ -159,19 +445,27 @@ interface SelectFieldProps {
 
 function SelectField({ label, value, options, onChange }: SelectFieldProps) {
   return (
-    <label className="group bg-surface hover:bg-elevated focus-within:bg-elevated transition-colors px-4 py-3 flex flex-col gap-1">
-      <span className="chrome-label">{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="bg-transparent outline-none text-fg text-[14px] appearance-none cursor-pointer"
-      >
-        {options.map((o) => (
-          <option key={o} value={o} className="bg-bg text-fg">
-            {o}
-          </option>
-        ))}
-      </select>
+    <label className="group bg-surface hover:bg-elevated focus-within:bg-elevated transition-colors px-4 py-3 flex flex-col gap-1 cursor-pointer">
+      <span className="chrome-label flex items-center justify-between">
+        <span>{label}</span>
+        <span className="text-mute normal-case tracking-normal text-[10px]">change ▾</span>
+      </span>
+      <div className="flex items-center justify-between gap-2">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="bg-transparent outline-none text-fg text-[14px] appearance-none cursor-pointer flex-1"
+        >
+          {options.map((o) => (
+            <option key={o} value={o} className="bg-bg text-fg">
+              {o}
+            </option>
+          ))}
+        </select>
+        <span className="text-dim group-hover:text-fg transition-colors text-[12px] select-none pointer-events-none">
+          ▾
+        </span>
+      </div>
     </label>
   );
 }

@@ -35,6 +35,42 @@ def test_create_product_job(client):
     assert job["platform"] == "amazon"
     assert job["status"] == "pending"
     assert job["active"] is True
+    assert job["webhook_url"] is None
+
+
+def test_create_with_webhook_only(client):
+    """Email is optional once a webhook is supplied."""
+    r = client.post("/api/jobs", json={
+        "url": "https://www.amazon.in/dp/B08BPQ9CZ1",
+        "webhook_url": "https://hooks.example.com/abc",
+        "alert_type": "stock",
+    })
+    assert r.status_code == 201
+    job = r.json()
+    assert job["email"] is None
+    assert job["webhook_url"] == "https://hooks.example.com/abc"
+    assert job["telegram_chat_id"] is None
+
+
+def test_create_with_telegram_only(client):
+    """telegram_chat_id alone passes validation."""
+    r = client.post("/api/jobs", json={
+        "url": "https://www.amazon.in/dp/B08BPQ9CZ1",
+        "telegram_chat_id": "987654321",
+        "alert_type": "stock",
+    })
+    assert r.status_code == 201
+    job = r.json()
+    assert job["telegram_chat_id"] == "987654321"
+    assert job["email"] is None
+
+
+def test_create_rejects_when_no_channels(client):
+    r = client.post("/api/jobs", json={
+        "url": "https://www.amazon.in/dp/foo",
+        "alert_type": "stock",
+    })
+    assert r.status_code == 422
 
 
 def test_create_rejects_unsupported_url(client):

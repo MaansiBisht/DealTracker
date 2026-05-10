@@ -26,7 +26,15 @@ class Job(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     kind: Mapped[str] = mapped_column(String(16), index=True)
     url: Mapped[str] = mapped_column(Text)
-    email: Mapped[str] = mapped_column(String(255))
+
+    # At least one delivery channel must be set. The schema layer enforces it.
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    webhook_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Per-watch Telegram routing — anyone's chat_id can be attached. Users
+    # find their chat_id by sending any message to the bot, which replies
+    # with it.
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
     alert_type: Mapped[str] = mapped_column(String(16))
     threshold: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     platform: Mapped[str] = mapped_column(String(32))
@@ -57,3 +65,24 @@ class Event(Base):
     message: Mapped[str] = mapped_column(Text)
 
     job: Mapped[Job] = relationship(back_populates="events")
+
+
+class TelegramPairing(Base):
+    """One-time token issued when a user clicks Connect Telegram.
+
+    Filled in by the long-poll worker when the user taps Start in
+    Telegram (which sends "/start <token>" to the bot). The frontend
+    polls /api/telegram/pairing/{token} until chat_id arrives, then
+    drops it into the watch payload silently — the user never sees
+    the chat_id or the token.
+    """
+
+    __tablename__ = "telegram_pairings"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    chat_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    paired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
