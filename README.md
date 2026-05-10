@@ -134,35 +134,6 @@ message broker. The persistence is a 36 KB file you can scp.
 
 ---
 
-## 🎬 Screenshots
-
-> Drop your captures into `docs/screenshots/` to fill these in.
-
-<table>
-<tr>
-<td align="center" width="50%">
-   <img src="docs/screenshots/console-products.png" alt="Products view" width="100%"/><br/>
-   <sub><b>Products tab</b> — submit form, live job rows</sub>
-</td>
-<td align="center" width="50%">
-   <img src="docs/screenshots/console-hotels.png" alt="Hotels view" width="100%"/><br/>
-   <sub><b>Hotels tab</b> — same shell, 30-day scan vibe</sub>
-</td>
-</tr>
-<tr>
-<td align="center" width="50%">
-   <img src="docs/screenshots/terminal-stream.png" alt="Live tick log" width="100%"/><br/>
-   <sub><b>Live tick log</b> — alert lines flash amber</sub>
-</td>
-<td align="center" width="50%">
-   <img src="docs/screenshots/email-alert.png" alt="Email alert" width="100%"/><br/>
-   <sub><b>The payoff</b> — Gmail shows up at threshold</sub>
-</td>
-</tr>
-</table>
-
----
-
 ## 🚀 Quickstart
 
 ### 🐳 Docker — recommended
