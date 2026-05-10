@@ -17,7 +17,6 @@ DealTracker is a Python script that monitors products and hotels across multiple
 ```
 DealTracker/
 ├── main.py                           # Main entry point (auto-detects product vs hotel)
-├── start_pullman_all_platforms.py   # Multi-platform hotel scanner
 ├── src/
 │   ├── __init__.py
 │   ├── config.py                     # Configuration and environment variables
@@ -92,14 +91,6 @@ For hotel price tracking, URLs must include check-in/check-out dates:
 - **Booking.com:** `https://www.booking.com/hotel/in/hotel-name.html?checkin=2024-05-01&checkout=2024-05-02`
 - **MakeMyTrip:** `https://www.makemytrip.com/hotels/hotel-details/?checkin=2024-05-01&checkout=2024-05-02`
 - **Agoda:** `https://www.agoda.com/hotel-name/hotel/city.html?checkIn=2024-05-01&checkOut=2024-05-02`
-
-**Multi-Platform Hotel Scanner:**
-```bash
-python start_pullman_all_platforms.py
-```
-This script scans a specific hotel across all supported platforms simultaneously and finds the best deals.
-
-> Note: `start_pullman_all_platforms.py` is hard-coded to *Pullman New Delhi Aerocity* and the next Mon→Tue check-in window. Treat it as an example script — copy and edit the URLs/dates inside `get_pullman_urls()` for your own property.
 
 **Monitoring Intervals:**
 - **Products:** Check every hour
