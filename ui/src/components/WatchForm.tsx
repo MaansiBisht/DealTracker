@@ -105,7 +105,7 @@ export function WatchForm({ view, onSubmit }: Props) {
         required
       />
 
-      <div className="grid grid-cols-[2fr_1fr] gap-px">
+      <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-px">
         <ToggleField
           label="notify email"
           checked={emailEnabled}
@@ -139,7 +139,7 @@ export function WatchForm({ view, onSubmit }: Props) {
         }}
       />
 
-      <div className="grid grid-cols-[1fr_auto] gap-px">
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-px">
         <Field
           label="Threshold"
           placeholder={needsThreshold ? '₹ amount' : '—  not used for this alert'}
@@ -480,7 +480,10 @@ function SubmitButton({ submitting }: { submitting: boolean }) {
         bg-ok text-bg
         hover:brightness-95 active:brightness-90 disabled:opacity-70 disabled:cursor-progress
         transition-[filter,letter-spacing] duration-150
-        self-center mr-3 h-10 px-4
+        h-11 sm:h-10
+        w-full sm:w-auto
+        sm:self-center sm:mr-3
+        px-4
         font-mono text-[13px] tracking-[0.16em]
         flex items-center justify-center gap-2
         focus-visible:outline-2 focus-visible:outline-fg focus-visible:outline-offset-[-2px]

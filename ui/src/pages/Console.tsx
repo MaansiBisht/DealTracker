@@ -31,7 +31,7 @@ export function Console({ view }: ConsoleProps) {
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-      className="flex flex-col gap-12"
+      className="flex flex-col gap-8 sm:gap-12"
     >
       <Section index="01" label="New watch" hint={newWatchHint}>
         <SupportedPlatforms view={kind} />

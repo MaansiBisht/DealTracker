@@ -40,26 +40,40 @@ function Row({ job, isLast, onStop }: { job: Job; isLast: boolean; onStop: (id: 
       exit={{ opacity: 0, height: 0, marginTop: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
       transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       className={`
-        grid grid-cols-[28px_120px_1fr_160px_100px_72px] items-center gap-4
+        flex flex-col gap-1
+        sm:grid sm:grid-cols-[28px_120px_1fr_160px_100px_72px] sm:items-center sm:gap-4
         px-4 py-3 text-[13px] text-fg
         hover:bg-elevated transition-colors group
         ${isLast ? '' : 'hairline-b'}
       `}
     >
-      <StatusDot status={job.status} />
-      <span className="font-mono text-dim lowercase truncate">{job.platform}</span>
-      <PriceCell job={job} />
-      <span className={statusClass(job.status)}>{statusLabel(job)}</span>
-      <span className="tabular text-mute">
-        {relativeTime(job.last_checked_at ?? job.created_at)}
-      </span>
-      <button
-        type="button"
-        onClick={() => onStop(job.id)}
-        className="chrome-label tabular tracking-[0.18em] text-mute hover:text-err transition-colors text-right"
-      >
-        [STOP]
-      </button>
+      {/* Mobile: top row = dot · platform · STOP. Desktop: 6 columns. */}
+      <div className="flex items-center gap-3 sm:contents">
+        <StatusDot status={job.status} />
+        <span className="font-mono text-dim lowercase truncate flex-1 sm:flex-none">
+          {job.platform}
+        </span>
+        <button
+          type="button"
+          onClick={() => onStop(job.id)}
+          className="
+            chrome-label tabular tracking-[0.18em]
+            text-mute hover:text-err transition-colors
+            sm:text-right sm:order-last
+          "
+        >
+          [STOP]
+        </button>
+      </div>
+
+      {/* Mobile: second row = price · status · age (compact, indented). */}
+      <div className="flex items-center gap-3 text-[12.5px] pl-7 sm:pl-0 sm:contents">
+        <PriceCell job={job} />
+        <span className={`${statusClass(job.status)} truncate`}>{statusLabel(job)}</span>
+        <span className="tabular text-mute whitespace-nowrap">
+          {relativeTime(job.last_checked_at ?? job.created_at)}
+        </span>
+      </div>
     </motion.div>
   );
 }

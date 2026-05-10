@@ -50,7 +50,11 @@ export function Terminal({ view }: Props) {
       <Header connected={connected} count={events.length} paused={paused} onResume={resume} />
       <div
         ref={scrollRef}
-        className="px-4 py-3 max-h-[420px] overflow-y-auto font-mono text-[12.5px] leading-[1.7]"
+        className="
+          px-4 py-3 max-h-[420px]
+          overflow-y-auto overflow-x-auto
+          font-mono text-[11.5px] sm:text-[12.5px] leading-[1.7]
+        "
       >
         {events.length === 0 ? (
           <Empty connected={connected} />
@@ -121,7 +125,11 @@ function Line({ line }: { line: TickEvent }) {
           : { opacity: 1 }
       }
       transition={{ duration: flash ? 0.7 : 0.18, ease: 'easeOut' }}
-      className="grid grid-cols-[80px_120px_1fr] gap-4 tabular px-1 -mx-1"
+      className="
+        grid grid-cols-[68px_92px_max-content] sm:grid-cols-[80px_120px_1fr]
+        gap-3 sm:gap-4 tabular px-1 -mx-1
+        whitespace-nowrap sm:whitespace-normal
+      "
     >
       <span className="text-mute">{formatLocalTime(line.ts)}</span>
       <span className="text-dim">[{padPlatform(line.platform)}]</span>
@@ -143,7 +151,7 @@ function Cursor() {
     <motion.span
       animate={{ opacity: [1, 1, 0, 0] }}
       transition={{ duration: 0.8, repeat: Infinity, ease: 'linear', times: [0, 0.5, 0.5, 1] }}
-      className="inline-block w-[8px] h-[14px] bg-ok translate-y-[2px] ml-[200px]"
+      className="inline-block w-[8px] h-[14px] bg-ok translate-y-[2px] ml-[160px] sm:ml-[200px]"
     />
   );
 }
