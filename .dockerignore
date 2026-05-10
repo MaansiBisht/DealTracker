@@ -1,0 +1,38 @@
+# Local virtualenv + caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend build artifacts (rebuilt fresh inside the image)
+ui/node_modules/
+ui/dist/
+*.tsbuildinfo
+
+# Persistent state — mounted as a volume at runtime
+data/
+*.db
+*.db-journal
+
+# Secrets and local-only config
+.env
+.env.local
+
+# VCS / OS / editors
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/
+
+# Docs / media — not needed at runtime
+README.md
+screencast/
+*.zip
+
+# Docker artifacts (avoid recursive copies)
+Dockerfile
+docker-compose.yml
+.dockerignore

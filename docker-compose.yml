@@ -1,0 +1,35 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dealtracker:latest
+    container_name: dealtracker
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    env_file:
+      # Reads WEB_USER, WEB_PASS, EMAIL_ADDRESS, EMAIL_PASSWORD, PINCODE,
+      # FALLBACK_EMAIL, TICK_INTERVAL_*. Copy .env.example to .env first.
+      - .env
+
+    volumes:
+      # SQLite + any future persistent state lives here.
+      - ./data:/app/data
+
+    # Chromium needs more shared memory than Docker's default 64 MB,
+    # otherwise it crashes mid-scrape with "Out of memory".
+    shm_size: 1gb
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
