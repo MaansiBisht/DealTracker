@@ -5,23 +5,30 @@
  * Dark, monospace, sharp-cornered. One signal hue per state.
  */
 @theme {
+  /*
+   * Soft-dark palette — readable without going pitch black.
+   * Lightness is bumped ~5 points across the surface stack and the
+   * dim/mute text colors are brighter so secondary copy doesn't
+   * disappear.  Hue stays cool (250) at low chroma for a slate feel.
+   */
+
   /* Surfaces */
-  --color-bg:        oklch(13% 0.01 240);   /* deep cool graphite */
-  --color-surface:   oklch(17% 0.01 240);
-  --color-elevated:  oklch(20% 0.01 240);
-  --color-rule:      oklch(28% 0.01 240);   /* hairline borders */
-  --color-terminal:  oklch(09% 0 0);        /* terminal pane */
+  --color-bg:        oklch(23% 0.012 250);  /* soft slate, breathable  */
+  --color-surface:   oklch(27% 0.012 250);  /* card background         */
+  --color-elevated:  oklch(31% 0.012 250);  /* hover / focus state     */
+  --color-rule:      oklch(42% 0.012 250);  /* hairline borders        */
+  --color-terminal:  oklch(18% 0.010 250);  /* darker than bg but not black */
 
   /* Text */
-  --color-fg:        oklch(96% 0 0);
-  --color-dim:       oklch(60% 0 0);
-  --color-mute:      oklch(42% 0 0);
+  --color-fg:        oklch(97% 0.005 250);  /* near-white primary copy */
+  --color-dim:       oklch(76% 0.010 250);  /* secondary               */
+  --color-mute:      oklch(62% 0.010 250);  /* tertiary                */
 
   /* Signals */
-  --color-ok:        oklch(78% 0.18 145);   /* phosphor green */
-  --color-alert:     oklch(80% 0.16 75);    /* amber */
-  --color-err:       oklch(70% 0.20 25);    /* red */
-  --color-info:      oklch(70% 0.10 240);   /* steel blue, used sparingly */
+  --color-ok:        oklch(76% 0.17 150);   /* phosphor green, slightly cooler */
+  --color-alert:     oklch(80% 0.16 75);    /* amber                   */
+  --color-err:       oklch(70% 0.20 25);    /* red                     */
+  --color-info:      oklch(74% 0.09 245);   /* steel blue, used sparingly */
 
   /* Type */
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
@@ -56,18 +63,17 @@
     line-height: 1.5;
   }
 
-  /* Subtle vertical scanline texture — barely-there atmosphere */
+  /* Very faint atmospheric grain — barely there, easier on the eyes
+     than full scanlines on a lighter background. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     pointer-events: none;
-    background-image: repeating-linear-gradient(
-      0deg,
-      transparent 0,
-      transparent 3px,
-      oklch(100% 0 0 / 0.012) 3px,
-      oklch(100% 0 0 / 0.012) 4px
+    background-image: radial-gradient(
+      circle at 20% 0%,
+      oklch(55% 0.04 250 / 0.06),
+      transparent 60%
     );
     z-index: 0;
   }

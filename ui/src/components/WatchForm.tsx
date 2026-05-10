@@ -186,7 +186,8 @@ function SubmitButton({ submitting }: { submitting: boolean }) {
         bg-ok text-bg
         hover:brightness-95 active:brightness-90 disabled:opacity-70 disabled:cursor-progress
         transition-[filter,letter-spacing] duration-150
-        px-8 font-mono text-[13px] tracking-[0.18em]
+        self-center mr-3 h-10 px-4
+        font-mono text-[13px] tracking-[0.16em]
         flex items-center justify-center gap-2
         focus-visible:outline-2 focus-visible:outline-fg focus-visible:outline-offset-[-2px]
       "
