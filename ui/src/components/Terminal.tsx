@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useEventStream } from '~/hooks/useEventStream';
+import { formatLocalTime } from '~/lib/time';
 import type { EventKind, JobKind, TickEvent } from '~/types/job';
 
 interface Props {
@@ -122,7 +123,7 @@ function Line({ line }: { line: TickEvent }) {
       transition={{ duration: flash ? 0.7 : 0.18, ease: 'easeOut' }}
       className="grid grid-cols-[80px_120px_1fr] gap-4 tabular px-1 -mx-1"
     >
-      <span className="text-mute">{formatTs(line.ts)}</span>
+      <span className="text-mute">{formatLocalTime(line.ts)}</span>
       <span className="text-dim">[{padPlatform(line.platform)}]</span>
       <span className={tone}>{line.message}</span>
     </motion.div>
@@ -153,14 +154,6 @@ function textClass(kind: EventKind): string {
   if (kind === 'tick_start') return 'text-info';
   if (kind === 'tick_done' || kind === 'job_stop') return 'text-dim';
   return 'text-fg';
-}
-
-function formatTs(iso: string): string {
-  const d = new Date(iso);
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  const s = String(d.getSeconds()).padStart(2, '0');
-  return `${h}:${m}:${s}`;
 }
 
 function padPlatform(p: string): string {
