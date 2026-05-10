@@ -24,6 +24,18 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Node / frontend
+node_modules/
+ui/dist/
+ui/.vite/
+ui/node_modules/
+*.tsbuildinfo
+
+# Web app
+data/
+*.db
+*.db-journal
+
 # Archives / build artifacts
 *.zip
 build/
