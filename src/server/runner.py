@@ -18,6 +18,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal
+from .events import bus
 from .models import Event, Job
 
 # Reuse existing scraper machinery.
@@ -220,7 +221,18 @@ def _alert(db: Session, job: Job, reason: str) -> None:
 # ---------- helpers ------------------------------------------------------------
 
 def _emit(db: Session, job: Job, kind: str, message: str) -> None:
-    db.add(Event(job_id=job.id, kind=kind, message=message, ts=_now()))
+    e = Event(job_id=job.id, kind=kind, message=message, ts=_now())
+    db.add(e)
+    db.flush()  # populate e.id without committing yet
+    bus.publish({
+        "id": e.id,
+        "ts": e.ts.isoformat(),
+        "job_id": job.id,
+        "job_kind": job.kind,
+        "platform": job.platform,
+        "kind": kind,
+        "message": message,
+    })
 
 
 def _now() -> datetime:

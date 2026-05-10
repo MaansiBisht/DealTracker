@@ -56,6 +56,8 @@ class EventOut(BaseModel):
     id: int
     ts: datetime
     job_id: str
+    job_kind: JobKind
+    platform: str
     kind: EventKind
     message: str
 

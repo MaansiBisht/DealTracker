@@ -48,6 +48,8 @@ export interface TickEvent {
   id: number;
   ts: string;
   job_id: string;
+  job_kind: JobKind;
+  platform: string;
   kind: EventKind;
   message: string;
 }

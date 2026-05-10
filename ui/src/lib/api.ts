@@ -32,6 +32,8 @@ async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => http<{ status: 'ok'; version: string }>('/api/health'),
 
+  platforms: () => http<{ product: string[]; hotel: string[] }>('/api/platforms'),
+
   listJobs: (kind?: JobKind) => {
     const qs = kind ? `?kind=${kind}` : '';
     return http<Job[]>(`/api/jobs${qs}`);
@@ -43,10 +45,11 @@ export const api = {
   stopJob: (id: string) =>
     http<Job>(`/api/jobs/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
 
-  recentEvents: (opts?: { limit?: number; jobId?: string }) => {
+  recentEvents: (opts?: { limit?: number; jobId?: string; kind?: JobKind }) => {
     const params = new URLSearchParams();
     if (opts?.limit) params.set('limit', String(opts.limit));
     if (opts?.jobId) params.set('job_id', opts.jobId);
+    if (opts?.kind) params.set('kind', opts.kind);
     const qs = params.toString();
     return http<TickEvent[]>(`/api/events/recent${qs ? `?${qs}` : ''}`);
   },

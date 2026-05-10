@@ -1,8 +1,9 @@
 import { motion } from 'framer-motion';
 import { Section } from '~/components/Section';
+import { SupportedPlatforms } from '~/components/SupportedPlatforms';
 import { WatchForm } from '~/components/WatchForm';
 import { WatchList } from '~/components/WatchList';
-import { TerminalStub } from '~/components/TerminalStub';
+import { Terminal } from '~/components/Terminal';
 import { useJobs } from '~/hooks/useJobs';
 import type { View } from '~/components/Tabs';
 import type { JobKind } from '~/types/job';
@@ -33,6 +34,7 @@ export function Console({ view }: ConsoleProps) {
       className="flex flex-col gap-12"
     >
       <Section index="01" label="New watch" hint={newWatchHint}>
+        <SupportedPlatforms view={kind} />
         <WatchForm view={kind} onSubmit={async (p) => { await create(p); }} />
       </Section>
 
@@ -40,8 +42,8 @@ export function Console({ view }: ConsoleProps) {
         <WatchList jobs={jobs} loading={loading} error={error} onStop={stop} />
       </Section>
 
-      <Section index="03" label="Tick log" hint="live · server-sent events (stub)">
-        <TerminalStub view={view} />
+      <Section index="03" label="Tick log" hint="live · server-sent events">
+        <Terminal view={kind} />
       </Section>
     </motion.div>
   );
