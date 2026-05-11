@@ -191,10 +191,26 @@ class TestClassifyStock:
         html = '<html><body><p>This item is currently unavailable.</p></body></html>'
         assert classify_stock(_soup(html)) == "out of stock"
 
-    def test_defaults_to_in_stock_when_no_signals(self):
-        # Matches legacy behaviour; scrape_flipkart will coerce to 'unknown'
-        # if price extraction also fails.
+    def test_returns_unknown_when_no_jsonld_no_cta_no_oos_text(self):
+        """The recaptcha-interstitial / partial-render case. No JSON-LD
+        Product, no buy-box buttons, no 'sold out' text → refuse to
+        claim 'in stock'. Previously fell through to 'in stock' and
+        caused false re-alerts on OOS variants.
+        """
         html = '<html><body><p>Some unrelated content</p></body></html>'
+        assert classify_stock(_soup(html)) == "unknown"
+
+    def test_returns_in_stock_when_jsonld_present_but_no_availability_or_cta(self):
+        """Page DID render (JSON-LD Product is there) but the JSON-LD
+        lacked an availability field and no buttons surfaced. This is
+        the legitimate 'rendered but quiet' case where 'in stock' is
+        still the correct default.
+        """
+        html = """
+        <script type="application/ld+json">
+        {"@type":"Product","name":"thingy","offers":{"price":"100"}}
+        </script>
+        """
         assert classify_stock(_soup(html)) == "in stock"
 
 
@@ -240,6 +256,21 @@ def test_scrape_flipkart_unknown_when_page_empty(monkeypatch):
     result = scrape_flipkart(_StubDriver("<html></html>"), "https://www.flipkart.com/x")
     assert result["stock_status"] == "unknown"
     assert result["price"] is None
+
+
+def test_scrape_flipkart_recaptcha_returns_unknown(monkeypatch):
+    """Flipkart's bot-detection interstitial — title is the giveaway.
+    Must return 'unknown' and emit a warning, never a stock state.
+    """
+    monkeypatch.setattr("src.scrapers.flipkart.time.sleep", lambda *_: None)
+    captcha_html = """
+    <!DOCTYPE html><html lang=en><meta charset=UTF-8>
+    <title>Flipkart reCAPTCHA</title>
+    <link rel=stylesheet href=/recaptcha.css>
+    <div id=challenge>verify you are human</div>
+    """
+    result = scrape_flipkart(_StubDriver(captcha_html), "https://www.flipkart.com/iphone/p/itm1")
+    assert result == {"stock_status": "unknown", "price": None}
 
 
 def test_scrape_flipkart_in_stock_happy_path(monkeypatch):

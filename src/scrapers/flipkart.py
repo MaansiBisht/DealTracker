@@ -1,7 +1,10 @@
 import json
+import logging
 import re
 import time
 from bs4 import BeautifulSoup
+
+log = logging.getLogger("dealtracker.scrapers.flipkart")
 
 _OOS_SCHEMA_TOKENS = {"outofstock", "soldout", "discontinued"}
 _IN_STOCK_SCHEMA_TOKENS = {"instock", "limitedavailability", "onlineonly", "preorder", "presale"}
@@ -123,7 +126,14 @@ def classify_stock(soup):
 
     1. JSON-LD offers.availability (authoritative when present).
     2. Buy-box CTA inspection (fallback for missing JSON-LD).
-    3. Page-text scan (last resort, legacy behaviour).
+    3. Page-text scan (last resort).
+
+    When none of the signals fire AND no JSON-LD Product block exists on
+    the page at all, we return "unknown" rather than defaulting to
+    "in stock". Flipkart occasionally serves a reCAPTCHA interstitial
+    (or a partially-hydrated page) — neither is a product page, and
+    silently labelling it "in stock" produced false re-alerts on
+    out-of-stock variants.
     """
     _, raw_availability = _walk_jsonld(soup)
     status = _classify_availability(raw_availability)
@@ -137,13 +147,34 @@ def classify_stock(soup):
     body_text_lower = soup.get_text(' ', strip=True).lower()
     if 'sold out' in body_text_lower or 'currently unavailable' in body_text_lower:
         return "out of stock"
+
+    # Refuse to claim "in stock" if the page didn't render a Product
+    # JSON-LD block. Every real Flipkart PDP carries one; an absence
+    # almost always means recaptcha / partial render.
+    if not soup.find("script", type="application/ld+json"):
+        return "unknown"
     return "in stock"
+
+
+def _looks_like_recaptcha(soup) -> bool:
+    """Quick fingerprint check for Flipkart's anti-bot interstitial."""
+    title = soup.find("title")
+    if title and "recaptcha" in title.get_text(strip=True).lower():
+        return True
+    return False
 
 
 def scrape_flipkart(driver, url):
     driver.get(url)
-    time.sleep(10)
+    # Give Flipkart's JS extra hydration time. Most renders settle in
+    # well under this, but the iPhone-class hot-products page is slow
+    # enough that a 10s wait left JSON-LD missing on ~20% of ticks.
+    time.sleep(15)
     soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+    if _looks_like_recaptcha(soup):
+        log.warning("flipkart served a recaptcha interstitial for %s — returning unknown", url)
+        return {"stock_status": "unknown", "price": None}
 
     price, _ = _walk_jsonld(soup)
     if not price:
