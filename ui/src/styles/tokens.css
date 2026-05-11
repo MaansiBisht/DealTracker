@@ -86,6 +86,17 @@
   input, button, select, textarea {
     font: inherit;
   }
+
+  /* Pointer cursor on every clickable affordance — disabled controls
+     keep whatever explicit cursor utility their component sets. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  select:not(:disabled),
+  summary,
+  label[for],
+  a[href] {
+    cursor: pointer;
+  }
 }
 
 @utility hairline {

@@ -71,10 +71,7 @@ function TopBar({
         <Tabs value={view} onChange={onChangeView} />
 
         <div className="chrome-label tabular hidden md:flex items-center gap-3">
-          <span className="text-mute truncate max-w-[20ch]">{currentUser.email}</span>
-          {currentUser.is_admin && (
-            <span className="text-alert tracking-[0.18em]">ADMIN</span>
-          )}
+          <UserChip email={currentUser.email} isAdmin={currentUser.is_admin} />
           <button
             type="button"
             onClick={() => void onLogout()}
@@ -93,6 +90,26 @@ function BootSplash() {
     <div className="min-h-full flex items-center justify-center">
       <span className="chrome-label tabular text-mute">loading…</span>
     </div>
+  );
+}
+
+function UserChip({ email, isAdmin }: { email: string; isAdmin: boolean }) {
+  const initial = email.trim().charAt(0).toUpperCase() || '?';
+  return (
+    <span className="flex items-center gap-2" title={email}>
+      <span
+        aria-hidden
+        className={`
+          inline-flex items-center justify-center w-6 h-6
+          font-sans font-semibold text-[11px] tracking-normal
+          ${isAdmin ? 'bg-alert text-bg' : 'bg-info text-bg'}
+        `}
+      >
+        {initial}
+      </span>
+      <span className="text-mute truncate max-w-[20ch]">{email}</span>
+      {isAdmin && <span className="text-alert tracking-[0.18em]">ADMIN</span>}
+    </span>
   );
 }
 
