@@ -291,6 +291,9 @@ def _emit(db: Session, job: Job, kind: str, message: str) -> None:
         "id": e.id,
         "ts": e.ts.isoformat(),
         "job_id": job.id,
+        # user_id rides with every event so the SSE route can filter by
+        # session identity. Null on legacy jobs that haven't been claimed.
+        "user_id": job.user_id,
         "job_kind": job.kind,
         "platform": job.platform,
         "kind": kind,

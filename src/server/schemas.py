@@ -71,6 +71,9 @@ class JobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    # Owner. Always present for jobs created post-auth; may be None on
+    # legacy orphans an admin can still see until the claim sweep runs.
+    user_id: Optional[str]
     kind: JobKind
     url: str
     email: Optional[EmailStr]
@@ -105,3 +108,33 @@ class EventOut(BaseModel):
 class HealthOut(BaseModel):
     status: Literal["ok"]
     version: str
+
+
+# ---- Auth ------------------------------------------------------------------
+
+
+class MagicLinkRequest(BaseModel):
+    """Body for POST /api/auth/request-magic-link."""
+
+    email: EmailStr
+
+
+class UserOut(BaseModel):
+    """Public projection of a User row — what /api/auth/me returns."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: EmailStr
+    name: Optional[str]
+    is_admin: bool
+    telegram_chat_id: Optional[str]
+    telegram_display_name: Optional[str]
+
+
+class AuthMeResponse(BaseModel):
+    """Bundles the User with the Telegram-bot status — one round-trip on mount."""
+
+    user: UserOut
+    telegram_bot_username: Optional[str] = None
+    telegram_bot_configured: bool = False

@@ -205,7 +205,9 @@ Every knob is an env var. Real defaults live in `.env.example`.
 | `EMAIL_ADDRESS`            |    ✅    | Gmail account that sends the alerts                       |
 | `EMAIL_PASSWORD`           |    ✅    | **Gmail App Password** ([generate here][app-pw])           |
 | `PINCODE`                  |    ✅    | Used by Amul scraper before reading stock/price           |
-| `WEB_USER` · `WEB_PASS`    |   prod   | HTTP Basic auth for the ops console                       |
+| `SESSION_SECRET`           |    ✅    | Signs the auth cookie. 32+ random bytes (see below).      |
+| `APP_BASE_URL`             |    ✅    | Public URL used in magic-link emails & cookie Secure flag |
+| `ADMIN_EMAIL`              |    ⏤    | Email that auto-receives admin (sees everyone's watches)  |
 | `FALLBACK_EMAIL`           |    ⏤    | Retried when delivery to the watch's email fails          |
 | `TICK_INTERVAL_PRODUCT_SEC`|    ⏤    | Default `30` (dev). Use `3600` in prod.                   |
 | `TICK_INTERVAL_HOTEL_SEC`  |    ⏤    | Default `60` (dev). Use `10800` in prod.                  |
@@ -219,6 +221,32 @@ Every knob is an env var. Real defaults live in `.env.example`.
 > 🔐 **Why an App Password?** Google blocks plain SMTP login from your
 > account password since 2022. Two-factor authentication + an App
 > Password is the official path. It's also revocable from one screen.
+
+### 🔑 Auth & sessions
+
+The ops console signs users in via a **one-time magic link** emailed
+through the same SMTP setup. No passwords, no reset flow. (The previous
+`WEB_USER` / `WEB_PASS` HTTP Basic gate has been removed.)
+
+Set these on first deploy:
+
+```bash
+# 32+ random bytes; keep one per environment.
+python -c 'import secrets; print(secrets.token_urlsafe(32))'  # → SESSION_SECRET
+
+# Public URL — used both in the magic-link email body AND to flip the
+# session cookie's Secure flag (https → Secure-only).
+APP_BASE_URL=https://your-domain.example.com
+
+# The single email that auto-receives admin status on sign-in. Admin
+# sees every user's watches and tick events, and can stop any job.
+# Leave empty for a flat, all-equal-users deployment.
+ADMIN_EMAIL=you@example.com
+```
+
+On first sign-in the admin claims every legacy watch (those created
+before this auth landed). Everyone else starts with an empty workspace
+and only sees the watches + tick events they own.
 
 ### 🪝 Webhook payload
 

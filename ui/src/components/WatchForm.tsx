@@ -5,29 +5,50 @@ import type {
   AlertType,
   JobCreatePayload,
   JobKind,
-  TelegramStatus,
+  User,
 } from '~/types/job';
 
 interface Props {
   view: JobKind;
   onSubmit: (payload: JobCreatePayload) => Promise<void>;
+  // The signed-in user. Their persistent Telegram pairing seeds this
+  // form so a refresh, a new tab, or a different device all show the
+  // same "✓ connected" without re-pairing.
+  currentUser: User;
+  // Bot config flows down from /api/auth/me alongside the user. Reused
+  // here so the form doesn't need a second API round-trip on mount.
+  telegramBotConfigured: boolean;
+  telegramBotUsername: string | null;
+  // Asks the parent to re-pull /api/auth/me — used after a successful
+  // pair or disconnect so the rest of the app reflects the new state.
+  onAuthRefresh: () => Promise<void>;
 }
 
 const PRODUCT_ALERTS: AlertType[] = ['stock', 'price'];
 const HOTEL_ALERTS: AlertType[] = ['price_drop'];
 
-export function WatchForm({ view, onSubmit }: Props) {
+export function WatchForm({
+  view,
+  onSubmit,
+  currentUser,
+  telegramBotConfigured,
+  telegramBotUsername,
+  onAuthRefresh,
+}: Props) {
   const isHotel = view === 'hotel';
   const alertOptions = isHotel ? HOTEL_ALERTS : PRODUCT_ALERTS;
 
   const [url, setUrl] = useState('');
-  // Per-watch routing: every product can target a different Telegram chat.
-  // The Connect button hides the chat_id behind a token-pairing flow.
+  // Per-watch Telegram chat targeting. Initial value comes from the
+  // server-persisted pairing on the User row; the user can still paste
+  // a different chat_id per watch via the advanced panel.
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [email, setEmail] = useState('');
   const [tgEnabled, setTgEnabled] = useState(true);
-  const [tgChatId, setTgChatId] = useState('');
-  const [tgDisplayName, setTgDisplayName] = useState<string | null>(null);
+  const [tgChatId, setTgChatId] = useState<string>(currentUser.telegram_chat_id ?? '');
+  const [tgDisplayName, setTgDisplayName] = useState<string | null>(
+    currentUser.telegram_display_name,
+  );
   const [alertType, setAlertType] = useState<AlertType>(alertOptions[0]);
   const [threshold, setThreshold] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -38,14 +59,6 @@ export function WatchForm({ view, onSubmit }: Props) {
   if (!alertOptions.includes(alertType)) {
     setAlertType(alertOptions[0]);
   }
-
-  const [tgStatus, setTgStatus] = useState<TelegramStatus | null>(null);
-  useEffect(() => {
-    api
-      .telegramStatus()
-      .then(setTgStatus)
-      .catch(() => setTgStatus({ configured: false, bot_username: null }));
-  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -124,18 +137,37 @@ export function WatchForm({ view, onSubmit }: Props) {
       </div>
 
       <TelegramToggle
-        status={tgStatus}
+        configured={telegramBotConfigured}
+        botUsername={telegramBotUsername}
         enabled={tgEnabled}
         onToggle={setTgEnabled}
         chatId={tgChatId}
         displayName={tgDisplayName}
-        onPaired={(chatId, name) => {
+        onPaired={async (chatId, name) => {
           setTgChatId(chatId);
           setTgDisplayName(name);
+          // Pull the fresh user row so the rest of the app reflects the
+          // new persistent pairing.
+          await onAuthRefresh();
         }}
         onChatIdChange={(v) => {
+          // Manual paste is a per-watch override — does not touch the
+          // server-side persistent pairing.
           setTgChatId(v);
           setTgDisplayName(null);
+        }}
+        onDisconnect={async () => {
+          // Clears both the local "this watch will use…" state and the
+          // user's persistent pairing on the server.
+          try {
+            await api.telegramDisconnect();
+          } catch {
+            /* swallow — even if the server call fails, the local form
+               state below should still clear so submit works. */
+          }
+          setTgChatId('');
+          setTgDisplayName(null);
+          await onAuthRefresh();
         }}
       />
 
@@ -172,34 +204,48 @@ export function WatchForm({ view, onSubmit }: Props) {
 /* ---------- Telegram Connect-button toggle ------------------------------- */
 
 interface TelegramToggleProps {
-  status: TelegramStatus | null;
+  configured: boolean;
+  botUsername: string | null;
   enabled: boolean;
   onToggle: (v: boolean) => void;
   chatId: string;
   displayName: string | null;
-  onPaired: (chatId: string, displayName: string | null) => void;
+  onPaired: (chatId: string, displayName: string | null) => void | Promise<void>;
   onChatIdChange: (v: string) => void;
+  onDisconnect: () => void | Promise<void>;
 }
 
 function TelegramToggle({
-  status,
+  configured,
+  botUsername,
   enabled,
   onToggle,
   chatId,
   displayName,
   onPaired,
   onChatIdChange,
+  onDisconnect,
 }: TelegramToggleProps) {
-  const configured = status?.configured ?? false;
+  const username = botUsername ?? 'your_bot';
   const [pairing, setPairing] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Last-issued pairing token + how long we've been waiting. After ~6s
+  // we surface a manual fallback for Telegram Web users — its "Start Bot"
+  // button is known to silently fail to fire /start to the bot.
+  const [activeToken, setActiveToken] = useState<string | null>(null);
+  const [pairingElapsedSec, setPairingElapsedSec] = useState(0);
   const pollRef = useRef<number | null>(null);
+  const tickRef = useRef<number | null>(null);
 
   function stopPolling() {
     if (pollRef.current !== null) {
       window.clearInterval(pollRef.current);
       pollRef.current = null;
+    }
+    if (tickRef.current !== null) {
+      window.clearInterval(tickRef.current);
+      tickRef.current = null;
     }
   }
   useEffect(() => stopPolling, []);
@@ -207,15 +253,26 @@ function TelegramToggle({
   async function startConnect() {
     setError(null);
     setPairing(true);
+    setPairingElapsedSec(0);
     try {
       const { token, deep_link } = await api.telegramStartPairing();
+      setActiveToken(token);
       window.open(deep_link, '_blank', 'noopener');
+
+      // Drive the elapsed counter so the fallback panel can decide when
+      // to surface itself.
+      tickRef.current = window.setInterval(() => {
+        setPairingElapsedSec((s) => s + 1);
+      }, 1000);
+
       pollRef.current = window.setInterval(async () => {
         try {
           const s = await api.telegramPairingStatus(token);
           if (s.paired && s.chat_id) {
             stopPolling();
             setPairing(false);
+            setActiveToken(null);
+            setPairingElapsedSec(0);
             onPaired(s.chat_id, s.display_name);
           }
         } catch {
@@ -231,8 +288,19 @@ function TelegramToggle({
   function disconnect() {
     stopPolling();
     setPairing(false);
-    onPaired('', null);
-    onChatIdChange('');
+    setActiveToken(null);
+    setPairingElapsedSec(0);
+    void onDisconnect();
+  }
+
+  async function copyManualCommand() {
+    if (!activeToken) return;
+    const cmd = `/start ${activeToken}`;
+    try {
+      await navigator.clipboard.writeText(cmd);
+    } catch {
+      // older browsers — silently no-op; user can read+type it manually.
+    }
   }
 
   if (!configured) {
@@ -286,22 +354,62 @@ function TelegramToggle({
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={startConnect}
-                disabled={pairing}
-                className="
-                  bg-info text-bg
-                  hover:brightness-95 disabled:opacity-70 disabled:cursor-progress
-                  transition-[filter] duration-150
-                  h-9 px-4 font-mono text-[12px] tracking-[0.16em]
-                  focus-visible:outline-2 focus-visible:outline-fg focus-visible:outline-offset-[-2px]
-                "
-              >
-                {pairing ? '[ WAITING IN TELEGRAM… ]' : '[ CONNECT TELEGRAM ⇗ ]'}
-              </button>
-              {error && <span className="text-err text-[12.5px]">{error}</span>}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={startConnect}
+                  disabled={pairing}
+                  className="
+                    bg-info text-bg
+                    hover:brightness-95 disabled:opacity-70 disabled:cursor-progress
+                    transition-[filter] duration-150
+                    h-9 px-4 font-mono text-[12px] tracking-[0.16em]
+                    focus-visible:outline-2 focus-visible:outline-fg focus-visible:outline-offset-[-2px]
+                  "
+                >
+                  {pairing ? '[ WAITING IN TELEGRAM… ]' : '[ CONNECT TELEGRAM ⇗ ]'}
+                </button>
+                {error && <span className="text-err text-[12.5px]">{error}</span>}
+              </div>
+
+              {/* Telegram Web sometimes fails to send /start when the user
+                  taps "Start Bot" on the t.me intro page. After 6s we give
+                  them a one-paste manual fallback. */}
+              {pairing && activeToken && pairingElapsedSec >= 6 && (
+                <div className="flex flex-col gap-1 text-[12px] text-mute">
+                  <span>
+                    Stuck on Telegram Web? Open{' '}
+                    <a
+                      href={`https://t.me/${username}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-info underline-offset-2 hover:underline"
+                    >
+                      @{username}
+                    </a>{' '}
+                    in Telegram and send this exact command:
+                  </span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <code
+                      className="
+                        font-mono text-fg bg-bg
+                        hairline px-2 py-1 select-all
+                        text-[12.5px]
+                      "
+                    >
+                      /start {activeToken}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={copyManualCommand}
+                      className="chrome-label tabular tracking-[0.18em] text-mute hover:text-fg transition-colors"
+                    >
+                      [copy]
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

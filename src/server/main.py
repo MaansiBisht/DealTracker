@@ -27,11 +27,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from .db import init_db
 from .events import bus
 from .routes import router
 from .scheduler import shutdown as scheduler_shutdown, start as scheduler_start
+from .sessions import session_cookie_secure, session_secret
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -55,6 +57,17 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
+)
+
+# Session must be added BEFORE CORS so the cookie is set/read on every
+# request, including preflighted cross-origin XHRs from the Vite dev server.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=session_secret(),
+    session_cookie="dealtracker_session",
+    same_site="lax",
+    https_only=session_cookie_secure(),
+    max_age=60 * 60 * 24 * 30,  # 30 days
 )
 
 app.add_middleware(

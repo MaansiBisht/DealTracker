@@ -55,6 +55,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_jobs_for_v2_channels()
+    _migrate_add_user_columns()
 
 
 def _migrate_jobs_for_v2_channels() -> None:
@@ -111,3 +112,25 @@ def _migrate_jobs_for_v2_channels() -> None:
                 """
             ))
             conn.execute(text("DROP TABLE jobs_legacy_v1"))
+
+
+def _migrate_add_user_columns() -> None:
+    """Add `user_id` to legacy jobs / telegram_pairings tables.
+
+    Idempotent: existence check via SQLAlchemy inspector before ALTER.
+    Fresh DBs already have the column via `create_all`; only legacy
+    DBs minted before auth landed need work. Legacy rows stay NULL
+    until the admin claim sweep runs on first admin signin.
+    """
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    for table in ("jobs", "telegram_pairings"):
+        if table not in existing_tables:
+            continue
+        cols = {c["name"] for c in insp.get_columns(table)}
+        if "user_id" in cols:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id VARCHAR(32)"))

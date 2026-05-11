@@ -1,48 +1,55 @@
-"""HTTP Basic auth dependency.
+"""Auth dependencies — signed-cookie sessions only.
 
-If WEB_USER and WEB_PASS are set, every protected route requires them.
-If either is unset, auth is disabled (intended for local dev).
+Step 6 removed the legacy WEB_USER/WEB_PASS HTTP Basic codepath. Every
+protected route now resolves the current User from the session cookie
+set by /api/auth/verify after a magic-link click.
 """
 
 from __future__ import annotations
 
-import os
-import secrets
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from sqlalchemy.orm import Session
+from starlette.requests import Request
+
+from .db import get_session
+from .models import User
+from .sessions import current_user_id, logout_user
 
 
-_basic = HTTPBasic(auto_error=False)
+def current_user(
+    request: Request,
+    db: Session = Depends(get_session),
+) -> User:
+    """Resolve the User row from the signed session, else 401.
 
-
-def _expected() -> tuple[str, str] | None:
-    user = os.getenv("WEB_USER")
-    pwd = os.getenv("WEB_PASS")
-    if user and pwd:
-        return (user, pwd)
-    return None
-
-
-def require_user(creds: HTTPBasicCredentials | None = Depends(_basic)) -> str:
-    """Return the authenticated username, or 'anonymous' if auth is disabled."""
-    expected = _expected()
-    if expected is None:
-        return "anonymous"
-
-    if creds is None:
+    A stale session (cookie points at a deleted user) is cleared and
+    treated as unauthenticated — the next request will see a fresh
+    sign-in screen.
+    """
+    user_id = current_user_id(request)
+    if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="auth required",
-            headers={"WWW-Authenticate": 'Basic realm="dealtracker"'},
+            detail="not authenticated",
         )
-
-    user_ok = secrets.compare_digest(creds.username.encode(), expected[0].encode())
-    pass_ok = secrets.compare_digest(creds.password.encode(), expected[1].encode())
-    if not (user_ok and pass_ok):
+    user = db.get(User, user_id)
+    if user is None:
+        logout_user(request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="bad credentials",
-            headers={"WWW-Authenticate": 'Basic realm="dealtracker"'},
+            detail="session no longer valid",
         )
-    return creds.username
+    return user
+
+
+def optional_current_user(
+    request: Request,
+    db: Session = Depends(get_session),
+) -> Optional[User]:
+    """Like `current_user`, but returns None instead of raising on miss."""
+    user_id = current_user_id(request)
+    if not user_id:
+        return None
+    return db.get(User, user_id)

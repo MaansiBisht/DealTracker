@@ -1,7 +1,9 @@
 import type {
+  AuthMeResponse,
   Job,
   JobCreatePayload,
   JobKind,
+  TelegramConnection,
   TelegramPairingResponse,
   TelegramPairingStatus,
   TelegramStatus,
@@ -11,6 +13,9 @@ import type {
 /**
  * Typed fetch wrapper. All endpoints are relative — Vite proxies /api in
  * dev (see vite.config.ts), and FastAPI serves them same-origin in prod.
+ *
+ * `credentials: 'include'` keeps the signed-cookie session attached to
+ * every request, including the cross-origin Vite proxy hops in dev.
  */
 
 class ApiError extends Error {
@@ -21,6 +26,7 @@ class ApiError extends Error {
 
 async function http<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
   });
@@ -69,6 +75,23 @@ export const api = {
     const qs = params.toString();
     return http<TickEvent[]>(`/api/events/recent${qs ? `?${qs}` : ''}`);
   },
+
+  // ---- Auth + Telegram (server-backed) ----
+
+  authMe: () => http<AuthMeResponse>('/api/auth/me'),
+
+  authRequestMagicLink: (email: string) =>
+    http<{ ok: true }>('/api/auth/request-magic-link', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  authLogout: () => http<{ ok: true }>('/api/auth/logout', { method: 'POST' }),
+
+  telegramConnection: () => http<TelegramConnection>('/api/telegram/connection'),
+
+  telegramDisconnect: () =>
+    http<{ ok: true }>('/api/telegram/disconnect', { method: 'POST' }),
 };
 
 export { ApiError };

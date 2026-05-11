@@ -119,14 +119,18 @@ def send_message(chat_id: str, text: str) -> None:
 
 # ---------- pairing -----------------------------------------------------------
 
-def start_pairing() -> dict[str, str]:
-    """Mint a fresh pair token and return the deep-link URL for the UI."""
+def start_pairing(user_id: Optional[str] = None) -> dict[str, str]:
+    """Mint a fresh pair token bound to the requesting user.
+
+    `user_id` is optional only so legacy callers (and the auth-less unit
+    tests of the pairing flow) keep working; routes always pass it.
+    """
     if not is_configured():
         raise RuntimeError("Telegram bot not configured")
 
     token = secrets.token_urlsafe(PAIR_TOKEN_BYTES)
     with SessionLocal() as db:
-        db.add(TelegramPairing(token=token))
+        db.add(TelegramPairing(token=token, user_id=user_id))
         db.commit()
 
     username = bot_username() or "your_bot"
@@ -151,6 +155,16 @@ def pairing_status(token: str) -> dict[str, Any]:
 
 
 def _attempt_pair(token: str, chat_id: str, display_name: Optional[str]) -> bool:
+    """Bind a chat_id to the pairing token AND to the requesting User.
+
+    If the TelegramPairing row carries a user_id (every pairing minted via
+    the auth-gated route does), we also update User.telegram_chat_id and
+    User.telegram_display_name so the connection survives across sessions
+    and devices. The UI reads User.telegram_chat_id from /api/auth/me on
+    mount instead of polling per session.
+    """
+    from .models import User  # local import to avoid module-level cycle
+
     with SessionLocal() as db:
         row = db.get(TelegramPairing, token)
         if row is None:
@@ -159,6 +173,11 @@ def _attempt_pair(token: str, chat_id: str, display_name: Optional[str]) -> bool
             row.chat_id = chat_id
             row.display_name = display_name
             row.paired_at = datetime.now(timezone.utc)
+            if row.user_id:
+                user = db.get(User, row.user_id)
+                if user is not None:
+                    user.telegram_chat_id = chat_id
+                    user.telegram_display_name = display_name
             db.commit()
         return True
 
@@ -214,36 +233,33 @@ def poll_updates(timeout: int = 0) -> int:
         first_name = from_.get("first_name") or chat.get("first_name") or "there"
         full_name = " ".join(filter(None, [from_.get("first_name"), from_.get("last_name")])) or first_name
 
-        m = START_RE.match(text)
-        if m:
-            # /start <token> — pair this chat to the matching watch flow.
-            token = m.group(1)
-            if _attempt_pair(token, str(chat_id), full_name):
-                handled += 1
-                _safe_reply(
-                    chat_id,
-                    f"✅ paired with *DealTracker*. {first_name}, you'll receive alerts here.",
-                )
-            else:
-                _safe_reply(
-                    chat_id,
-                    "⚠️ that link has expired — open the watch form again and "
-                    "tap *Connect Telegram*.",
-                )
+        # /start with a valid pair token → pair the chat and reply once.
+        # Anything else (bare /start, unknown token, stale token from an
+        # old session) falls through to the same calm help message — we
+        # never tell the user a link is "expired" because race-y double
+        # /start sends were producing both ✅ and ⚠️ replies for one pair.
+        if not text.startswith("/start"):
             continue
 
-        if text.startswith("/start"):
-            # Bare /start — no pairing context. Tell them what to do AND
-            # give them their chat_id as a manual fallback.
+        m = START_RE.match(text)
+        if m and _attempt_pair(m.group(1), str(chat_id), full_name):
             handled += 1
             _safe_reply(
                 chat_id,
-                f"👋 Hi {first_name}, this is *DealTracker*.\n\n"
-                f"Your chat ID is `{chat_id}`.\n\n"
-                "To receive alerts here, open the watch form on the website "
-                "and tap *Connect Telegram*. Alternatively, paste the chat "
-                "ID above into the *Advanced* section of the form.",
+                f"✅ paired with *DealTracker*. {first_name}, you'll receive alerts here.",
             )
+            continue
+
+        # Bare /start, unknown token, or stale token. Same calm reply.
+        handled += 1
+        _safe_reply(
+            chat_id,
+            f"👋 Hi {first_name}, this is *DealTracker*.\n\n"
+            f"Your chat ID is `{chat_id}`.\n\n"
+            "To receive alerts here, open the watch form on the website "
+            "and tap *Connect Telegram*. If pairing already worked you "
+            "can ignore this message.",
+        )
 
     return handled
 

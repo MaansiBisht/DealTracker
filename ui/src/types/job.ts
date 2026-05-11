@@ -12,6 +12,8 @@ export type JobStatus =
 
 export interface Job {
   id: string;
+  // Owner. May be null for legacy orphans an admin can still see.
+  user_id: string | null;
   kind: JobKind;
   url: string;
   email: string | null;
@@ -29,6 +31,27 @@ export interface Job {
 
   active: boolean;
   created_at: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name: string | null;
+  is_admin: boolean;
+  telegram_chat_id: string | null;
+  telegram_display_name: string | null;
+}
+
+export interface AuthMeResponse {
+  user: User;
+  telegram_bot_username: string | null;
+  telegram_bot_configured: boolean;
+}
+
+export interface TelegramConnection {
+  paired: boolean;
+  chat_id: string | null;
+  display_name: string | null;
 }
 
 export interface JobCreatePayload {

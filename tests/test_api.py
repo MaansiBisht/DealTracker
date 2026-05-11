@@ -3,7 +3,21 @@
 The conftest stubs out the scheduler, so these exercise routing,
 validation, persistence, and the recent-events JOIN — no Selenium,
 no real ticks.
+
+Since Step 4 of the auth plan landed, every job/event endpoint requires
+an authenticated session. The module-level `client` fixture override
+below pre-authenticates a default test user so existing tests don't
+need to know the auth shape.
 """
+
+import pytest
+
+
+@pytest.fixture
+def client(auth_client):
+    """Authenticated TestClient for the protected endpoints."""
+    c, _user = auth_client(email="api-test-user@example.com")
+    return c
 
 
 def test_health(client):

@@ -20,12 +20,55 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+class User(Base):
+    """Authenticated identity. Email-keyed; admins flagged on signin."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # Persistent Telegram pairing — set once when /start <token> arrives.
+    # Per-watch overrides still live on Job.telegram_chat_id.
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    telegram_display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LoginToken(Base):
+    """One-time magic-link token. 15-minute TTL, single-use."""
+
+    __tablename__ = "login_tokens"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # IPv6-safe address column for per-IP rate limiting.
+    requested_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True, index=True)
+
+
 class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_new_id)
     kind: Mapped[str] = mapped_column(String(16), index=True)
     url: Mapped[str] = mapped_column(Text)
+
+    # Owner — nullable for legacy rows; populated for everything created
+    # after auth lands. The admin claim sweep assigns orphans on first
+    # admin signin.
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # At least one delivery channel must be set. The schema layer enforces it.
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -80,6 +123,14 @@ class TelegramPairing(Base):
     __tablename__ = "telegram_pairings"
 
     token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Who requested this pairing. Nullable on legacy rows minted before
+    # auth landed; populated for everything new.
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     chat_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

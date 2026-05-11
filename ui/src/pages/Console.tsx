@@ -6,13 +6,23 @@ import { WatchList } from '~/components/WatchList';
 import { Terminal } from '~/components/Terminal';
 import { useJobs } from '~/hooks/useJobs';
 import type { View } from '~/components/Tabs';
-import type { JobKind } from '~/types/job';
+import type { JobKind, User } from '~/types/job';
 
 interface ConsoleProps {
   view: View;
+  currentUser: User;
+  telegramBotConfigured: boolean;
+  telegramBotUsername: string | null;
+  onAuthRefresh: () => Promise<void>;
 }
 
-export function Console({ view }: ConsoleProps) {
+export function Console({
+  view,
+  currentUser,
+  telegramBotConfigured,
+  telegramBotUsername,
+  onAuthRefresh,
+}: ConsoleProps) {
   const kind: JobKind = view === 'hotels' ? 'hotel' : 'product';
   const { jobs, loading, error, create, stop } = useJobs(kind);
 
@@ -35,11 +45,24 @@ export function Console({ view }: ConsoleProps) {
     >
       <Section index="01" label="New watch" hint={newWatchHint}>
         <SupportedPlatforms view={kind} />
-        <WatchForm view={kind} onSubmit={async (p) => { await create(p); }} />
+        <WatchForm
+          view={kind}
+          onSubmit={async (p) => { await create(p); }}
+          currentUser={currentUser}
+          telegramBotConfigured={telegramBotConfigured}
+          telegramBotUsername={telegramBotUsername}
+          onAuthRefresh={onAuthRefresh}
+        />
       </Section>
 
       <Section index="02" label="Active watches" hint={watchesHint}>
-        <WatchList jobs={jobs} loading={loading} error={error} onStop={stop} />
+        <WatchList
+          jobs={jobs}
+          loading={loading}
+          error={error}
+          onStop={stop}
+          currentUser={currentUser}
+        />
       </Section>
 
       <Section index="03" label="Tick log" hint="live · server-sent events">

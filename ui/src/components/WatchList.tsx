@@ -1,15 +1,17 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { relativeTime } from '~/lib/time';
-import type { Job, JobStatus } from '~/types/job';
+import type { Job, JobStatus, User } from '~/types/job';
 
 interface Props {
   jobs: Job[];
   loading: boolean;
   error: string | null;
   onStop: (id: string) => Promise<void>;
+  // Authenticated user — controls Stop button visibility per row.
+  currentUser: User;
 }
 
-export function WatchList({ jobs, loading, error, onStop }: Props) {
+export function WatchList({ jobs, loading, error, onStop, currentUser }: Props) {
   if (loading && jobs.length === 0) {
     return <Placeholder text="loading watches…" />;
   }
@@ -24,14 +26,37 @@ export function WatchList({ jobs, loading, error, onStop }: Props) {
     <div className="bg-surface hairline" style={{ borderColor: 'var(--color-rule)' }}>
       <AnimatePresence initial={false}>
         {jobs.map((job, i) => (
-          <Row key={job.id} job={job} isLast={i === jobs.length - 1} onStop={onStop} />
+          <Row
+            key={job.id}
+            job={job}
+            isLast={i === jobs.length - 1}
+            onStop={onStop}
+            currentUser={currentUser}
+          />
         ))}
       </AnimatePresence>
     </div>
   );
 }
 
-function Row({ job, isLast, onStop }: { job: Job; isLast: boolean; onStop: (id: string) => Promise<void> }) {
+function Row({
+  job,
+  isLast,
+  onStop,
+  currentUser,
+}: {
+  job: Job;
+  isLast: boolean;
+  onStop: (id: string) => Promise<void>;
+  currentUser: User;
+}) {
+  const isMine = job.user_id === currentUser.id;
+  // Admin can stop anything; everyone else only their own. Matches the
+  // server's authorization rule in stop_job (routes.py).
+  const canStop = isMine || currentUser.is_admin;
+  // Admin-only: surface ownership for jobs that aren't theirs.
+  const showOwnerBadge = currentUser.is_admin && !isMine;
+
   return (
     <motion.div
       layout
@@ -52,18 +77,29 @@ function Row({ job, isLast, onStop }: { job: Job; isLast: boolean; onStop: (id: 
         <StatusDot status={job.status} />
         <span className="font-mono text-dim lowercase truncate flex-1 sm:flex-none">
           {job.platform}
+          {showOwnerBadge && (
+            <span className="text-mute ml-2 normal-case">
+              · {job.user_id ? 'other user' : 'orphan'}
+            </span>
+          )}
         </span>
-        <button
-          type="button"
-          onClick={() => onStop(job.id)}
-          className="
-            chrome-label tabular tracking-[0.18em]
-            text-mute hover:text-err transition-colors
-            sm:text-right sm:order-last
-          "
-        >
-          [STOP]
-        </button>
+        {canStop ? (
+          <button
+            type="button"
+            onClick={() => onStop(job.id)}
+            className="
+              chrome-label tabular tracking-[0.18em]
+              text-mute hover:text-err transition-colors
+              sm:text-right sm:order-last
+            "
+          >
+            [STOP]
+          </button>
+        ) : (
+          <span className="chrome-label tabular tracking-[0.18em] text-dim/40 sm:text-right sm:order-last select-none">
+            [—]
+          </span>
+        )}
       </div>
 
       {/* Mobile: second row = price · status · age (compact, indented). */}
