@@ -157,28 +157,33 @@ def pairing_status(token: str) -> dict[str, Any]:
 def _attempt_pair(token: str, chat_id: str, display_name: Optional[str]) -> bool:
     """Bind a chat_id to the pairing token AND to the requesting User.
 
+    Returns True only on the *actual* transition from unpaired → paired.
+    Returns False when the token is unknown (pruned / never minted) or
+    already paired. The caller uses this to suppress duplicate replies
+    when Telegram retries or two pollers race on the same update.
+
     If the TelegramPairing row carries a user_id (every pairing minted via
     the auth-gated route does), we also update User.telegram_chat_id and
     User.telegram_display_name so the connection survives across sessions
-    and devices. The UI reads User.telegram_chat_id from /api/auth/me on
-    mount instead of polling per session.
+    and devices.
     """
     from .models import User  # local import to avoid module-level cycle
 
     with SessionLocal() as db:
         row = db.get(TelegramPairing, token)
         if row is None:
-            return False
-        if row.chat_id is None:
-            row.chat_id = chat_id
-            row.display_name = display_name
-            row.paired_at = datetime.now(timezone.utc)
-            if row.user_id:
-                user = db.get(User, row.user_id)
-                if user is not None:
-                    user.telegram_chat_id = chat_id
-                    user.telegram_display_name = display_name
-            db.commit()
+            return False  # unknown / pruned token
+        if row.chat_id is not None:
+            return False  # already paired — silent replay
+        row.chat_id = chat_id
+        row.display_name = display_name
+        row.paired_at = datetime.now(timezone.utc)
+        if row.user_id:
+            user = db.get(User, row.user_id)
+            if user is not None:
+                user.telegram_chat_id = chat_id
+                user.telegram_display_name = display_name
+        db.commit()
         return True
 
 
@@ -211,7 +216,14 @@ def poll_updates(timeout: int = 0) -> int:
             timeout=timeout + 5,
         )
     except Exception as e:
-        log.warning("getUpdates failed: %s", e)
+        # "Conflict: terminated by other getUpdates request" happens during
+        # uvicorn --reload restarts — two pollers briefly overlap. Not a
+        # bug, not user-visible, just noise. Anything else is worth a
+        # warning.
+        if "Conflict" in str(e):
+            log.debug("getUpdates conflict (benign during reload): %s", e)
+        else:
+            log.warning("getUpdates failed: %s", e)
         return 0
 
     updates = body.get("result", []) or []
@@ -233,24 +245,28 @@ def poll_updates(timeout: int = 0) -> int:
         first_name = from_.get("first_name") or chat.get("first_name") or "there"
         full_name = " ".join(filter(None, [from_.get("first_name"), from_.get("last_name")])) or first_name
 
-        # /start with a valid pair token → pair the chat and reply once.
-        # Anything else (bare /start, unknown token, stale token from an
-        # old session) falls through to the same calm help message — we
-        # never tell the user a link is "expired" because race-y double
-        # /start sends were producing both ✅ and ⚠️ replies for one pair.
         if not text.startswith("/start"):
             continue
 
         m = START_RE.match(text)
-        if m and _attempt_pair(m.group(1), str(chat_id), full_name):
-            handled += 1
-            _safe_reply(
-                chat_id,
-                f"✅ paired with *DealTracker*. {first_name}, you'll receive alerts here.",
-            )
+        if m:
+            # /start <token-shape>: pair it on the transition, silently drop
+            # on replay / pruned / unknown. NEVER fall through to the help
+            # reply for a token-shaped /start — that was the dual-message
+            # bug where users saw ✅ paired + 👋 Hi together.
+            if _attempt_pair(m.group(1), str(chat_id), full_name):
+                handled += 1
+                _safe_reply(
+                    chat_id,
+                    f"✅ paired with *DealTracker*. {first_name}, you'll receive alerts here.",
+                )
+            else:
+                log.info("dropping stale /start <token> from chat %s", chat_id)
             continue
 
-        # Bare /start, unknown token, or stale token. Same calm reply.
+        # Bare /start (no token argument) — user typed it by hand. Show
+        # help + their chat_id so they can wire it up manually if they
+        # want to bypass the Connect button.
         handled += 1
         _safe_reply(
             chat_id,
