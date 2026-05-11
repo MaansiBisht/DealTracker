@@ -82,7 +82,7 @@ export function SignIn() {
               </h1>
               <p className="text-[13px] text-mute mb-6 leading-relaxed">
                 Drop your email below. We&rsquo;ll send you a one-time link
-                that signs you in for the next 30 days on this browser.
+                that signs you in for the next 24 hours on this browser.
                 No password.
               </p>
 

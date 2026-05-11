@@ -67,7 +67,7 @@ app.add_middleware(
     session_cookie="dealtracker_session",
     same_site="lax",
     https_only=session_cookie_secure(),
-    max_age=60 * 60 * 24 * 30,  # 30 days
+    max_age=60 * 60 * 24,  # 1 day
 )
 
 app.add_middleware(
