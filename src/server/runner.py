@@ -8,6 +8,7 @@ the SSE bus (step 5) will fan out to the terminal pane.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -257,13 +258,15 @@ def _deliver_telegram(db: Session, job: Job, reason: str) -> bool:
         _emit(db, job, "error", "telegram channel selected but bot is not configured")
         return False
 
+    # HTML parse_mode handles URLs cleanly — legacy Markdown choked on the
+    # underscores Flipkart loves to put in product slugs.
     text = (
-        f"🔔 *DealTracker* — {job.platform}\n"
-        f"{reason}\n"
-        f"{job.url}"
+        f"🔔 <b>DealTracker</b> — {html.escape(job.platform)}\n"
+        f"{html.escape(reason)}\n"
+        f"{html.escape(job.url)}"
     )
     try:
-        tg.send_message(job.telegram_chat_id, text)
+        tg.send_message(job.telegram_chat_id, text, parse_mode="HTML")
         _emit(db, job, "alert", f"TELEGRAM SENT to chat {job.telegram_chat_id} — {reason}")
         return True
     except Exception as e:

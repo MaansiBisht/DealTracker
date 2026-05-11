@@ -105,16 +105,19 @@ def _call(method: str, payload: dict[str, Any] | None = None, *, timeout: int = 
     return body
 
 
-def send_message(chat_id: str, text: str) -> None:
-    _call(
-        "sendMessage",
-        {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        },
-    )
+def send_message(chat_id: str, text: str, parse_mode: Optional[str] = "Markdown") -> None:
+    """Send a chat message. Pass parse_mode='HTML' (or None for plain) when
+    the body contains URLs or other content with Markdown-special characters
+    that Telegram's strict parser would choke on.
+    """
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    _call("sendMessage", payload)
 
 
 # ---------- pairing -----------------------------------------------------------
