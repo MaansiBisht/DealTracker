@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Square 32×32 favicon. Dark slate background, phosphor-green "D"
+       in a chunky monospace face. Matches the ops-console aesthetic
+       (no rounded corners, single signal hue, terminal-ish vibe). -->
+  <rect width="32" height="32" fill="#161b1e"/>
+  <text x="50%" y="54%"
+        dominant-baseline="central" text-anchor="middle"
+        font-family="ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace"
+        font-weight="700" font-size="22"
+        fill="#6fe19f">D</text>
+</svg>
