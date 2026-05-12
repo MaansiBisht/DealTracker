@@ -69,21 +69,15 @@ def start() -> None:
 
 
 def _maybe_schedule_telegram() -> None:
-    """Wire Telegram long-poll + pairing GC if the bot token is set."""
+    """Wire the periodic pairings GC if the bot token is set.
+
+    Inbound updates arrive via the webhook route now — no poller needed.
+    """
     if not tg.is_configured():
         log.info("telegram channel disabled (TELEGRAM_BOT_TOKEN not set)")
         return
 
     sch = get_scheduler()
-    sch.add_job(
-        tg.poll_updates,
-        trigger="interval",
-        seconds=4,
-        id="telegram-poll",
-        executor="io",
-        replace_existing=True,
-        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=1),
-    )
     sch.add_job(
         tg.prune_pairings,
         trigger="interval",
@@ -92,7 +86,7 @@ def _maybe_schedule_telegram() -> None:
         executor="io",
         replace_existing=True,
     )
-    log.info("telegram poller scheduled (every 4s)")
+    log.info("telegram pairings GC scheduled (every 15m)")
 
 
 def shutdown() -> None:

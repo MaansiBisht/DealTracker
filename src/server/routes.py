@@ -177,11 +177,38 @@ def telegram_start_pairing(user: User = Depends(current_user)) -> dict:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="telegram bot not configured",
         )
-    # Step 6 will plumb user_id all the way through `start_pairing`. Today
-    # the binding is recorded after pairing completes inside the long-poll
-    # worker. The dep is still required so unauthenticated callers can't
-    # mint pairing tokens.
     return tg.start_pairing(user_id=user.id)
+
+
+@router.post("/telegram/webhook")
+async def telegram_webhook(request: Request) -> dict:
+    """Inbound endpoint Telegram POSTs each update to.
+
+    Auth: Telegram echoes our pre-shared secret in the
+    `X-Telegram-Bot-Api-Secret-Token` header. Missing or wrong header
+    returns 404 so scanners on the path see no signal the endpoint
+    exists. Constant-time compare on the secret.
+    """
+    expected = tg.webhook_secret()
+    if not expected:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    presented = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    import hmac as _hmac
+    if not _hmac.compare_digest(presented, expected):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"ok": True}  # malformed body — ack and move on
+
+    try:
+        tg.handle_update(payload)
+    except Exception as e:
+        # Never raise back to Telegram; that would trigger retries we don't want.
+        log.warning("telegram webhook handler raised: %s", e)
+    return {"ok": True}
 
 
 @router.get("/telegram/pairing/{token}")

@@ -34,10 +34,41 @@ from .events import bus
 from .routes import router
 from .scheduler import shutdown as scheduler_shutdown, start as scheduler_start
 from .sessions import session_cookie_secure, session_secret
+from . import telegram as tg
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 UI_DIST = REPO_ROOT / "ui" / "dist"
+
+log = logging.getLogger("dealtracker.main")
+
+
+def _register_telegram_webhook() -> None:
+    """Idempotently register the Telegram webhook on startup.
+
+    Conditions: bot token + webhook secret + HTTPS APP_BASE_URL. Anything
+    missing is treated as "inbound disabled" — outbound sendMessage still
+    works, so already-paired users keep getting alerts even on local dev.
+    """
+    if not tg.is_configured():
+        return
+    base = os.getenv("APP_BASE_URL", "").strip()
+    if not base.startswith("https://"):
+        log.info(
+            "telegram inbound disabled (APP_BASE_URL is not HTTPS); "
+            "outbound sendMessage still works"
+        )
+        return
+    if not tg.webhook_secret():
+        log.warning(
+            "telegram inbound disabled (TELEGRAM_WEBHOOK_SECRET unset); "
+            "set it to a 32+ byte random value to enable pairing"
+        )
+        return
+    try:
+        tg.set_webhook(base)
+    except Exception as e:
+        log.error("set_webhook failed: %s — pairing will not work until fixed", e)
 
 
 @asynccontextmanager
@@ -45,6 +76,7 @@ async def lifespan(_app: FastAPI):
     init_db()
     bus.attach_loop(asyncio.get_running_loop())
     scheduler_start()
+    _register_telegram_webhook()
     try:
         yield
     finally:
