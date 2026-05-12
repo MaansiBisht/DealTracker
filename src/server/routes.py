@@ -33,6 +33,7 @@ from . import telegram as tg
 
 # Reuse existing platform routing logic from the scrapers package.
 from ..scrapers import HOTEL_PLATFORMS, SCRAPERS, get_platform_from_url
+from ..utils.url_normalizer import normalize_url
 
 # Email sender — re-used from the alerts pipeline without modification.
 from ..utils.email import send_email
@@ -81,7 +82,12 @@ def create_job(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
 ) -> Job:
-    platform = get_platform_from_url(payload.url)
+    # Resolve share/short links (amzn.in/d/…, fkrt.it/…, a.co/d/…) up front
+    # so the user sees a recognisable URL in the watch list AND so the
+    # platform-detection gate accepts them. Falls back to the original URL
+    # on any network failure; Selenium follows redirects at scrape time too.
+    canonical_url = normalize_url(payload.url)
+    platform = get_platform_from_url(canonical_url)
     if platform == "unknown":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -108,7 +114,7 @@ def create_job(
 
     job = Job(
         kind=kind,
-        url=payload.url,
+        url=canonical_url,
         user_id=user.id,
         email=payload.email,
         webhook_url=payload.webhook_url,

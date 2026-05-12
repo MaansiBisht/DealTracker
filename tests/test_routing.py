@@ -13,6 +13,7 @@ from src.scrapers import (
 @pytest.mark.parametrize(
     "url, expected",
     [
+        # canonical full-URL forms
         ("https://www.amazon.in/dp/B08BPQ9CZ1", "amazon"),
         ("https://amazon.com/dp/foo", "amazon"),
         ("https://www.flipkart.com/foo/p/itm123", "flipkart"),
@@ -23,7 +24,20 @@ from src.scrapers import (
         ("https://www.makemytrip.com/hotels/x", "makemytrip"),
         ("https://www.goibibo.com/hotels/x", "goibibo"),
         ("https://www.agoda.com/hotel/x", "agoda"),
+        # share / short URLs from app "Copy link" buttons
+        ("https://amzn.in/d/abc123", "amazon"),
+        ("https://amzn.eu/d/xyz", "amazon"),
+        ("https://amzn.to/3xYzAbc", "amazon"),
+        ("https://a.co/d/abcXYZ", "amazon"),
+        ("https://fkrt.it/abc-xyz", "flipkart"),
+        ("https://dl.flipkart.com/dl/foo", "flipkart"),
+        # unknown
         ("https://example.com/anything", "unknown"),
+        # adversarial: was a false positive under the old substring matcher
+        ("https://faux-amazon.evil.com/dp/foo", "unknown"),
+        # malformed
+        ("not a url", "unknown"),
+        ("", "unknown"),
     ],
 )
 def test_get_platform_from_url(url, expected):

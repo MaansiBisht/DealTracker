@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlparse
 
 from .amul import scrape_amul
 from .myntra import scrape_myntra
@@ -24,16 +25,36 @@ SCRAPERS = {
     'agoda': scrape_agoda,
 }
 
-PLATFORM_PATTERNS = {
-    'myntra.com': 'myntra',
+# Hostname → platform key. Matched exactly OR by domain suffix
+# (so `in.amazfit.com` and `amazfit.com` both resolve to `amazfit`).
+# Short / share hostnames included so app-share links route correctly
+# even before url_normalizer follows their redirect.
+PLATFORM_HOSTS = {
+    # canonical
+    'amazon.in': 'amazon',
+    'amazon.com': 'amazon',
+    'amazon.co.uk': 'amazon',
+    'amazon.de': 'amazon',
+    'amazon.fr': 'amazon',
+    'amazon.it': 'amazon',
+    'amazon.es': 'amazon',
+    'amazon.ae': 'amazon',
+    'amazon.sa': 'amazon',
     'flipkart.com': 'flipkart',
-    'amazon.': 'amazon',
+    'myntra.com': 'myntra',
     'amul.com': 'amul',
     'amazfit.com': 'amazfit',
     'booking.com': 'booking',
     'makemytrip.com': 'makemytrip',
     'goibibo.com': 'goibibo',
     'agoda.com': 'agoda',
+    # short / share links
+    'amzn.in': 'amazon',
+    'amzn.eu': 'amazon',
+    'amzn.to': 'amazon',
+    'a.co': 'amazon',
+    'fkrt.it': 'flipkart',
+    'dl.flipkart.com': 'flipkart',
 }
 
 
@@ -41,8 +62,22 @@ HOTEL_PLATFORMS = ['booking', 'makemytrip', 'goibibo', 'agoda']
 
 
 def get_platform_from_url(url):
-    for pattern, platform in PLATFORM_PATTERNS.items():
-        if pattern in url:
+    """Return the platform key for a URL, or 'unknown'.
+
+    Hostname-based: parses the URL, strips a leading `www.`, then matches
+    either exactly against PLATFORM_HOSTS or by domain suffix (so subdomains
+    like `in.amazfit.com` or `shop.amul.com` route correctly).
+    """
+    try:
+        host = (urlparse(url).hostname or '').lower()
+    except Exception:
+        return 'unknown'
+    if not host:
+        return 'unknown'
+    if host.startswith('www.'):
+        host = host[4:]
+    for pattern, platform in PLATFORM_HOSTS.items():
+        if host == pattern or host.endswith('.' + pattern):
             return platform
     return 'unknown'
 
