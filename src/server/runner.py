@@ -83,11 +83,14 @@ def run_tick(job_id: str) -> None:
 # ---------- scraping -----------------------------------------------------------
 
 def _do_scrape(job: Job) -> dict[str, Any]:
-    """Single scrape pass — works for both products and hotels.
-
-    Hotel URLs already carry checkin/checkout in the query string, so
-    we scrape that one date pair, not 30 days.
-    """
+    """Single scrape pass for product and single-date hotel watches."""
+    # Booking.com requires checkin/checkout to show room prices.
+    # Without dates the page shows no rates; the scraper always returns price=None.
+    if job.platform == "booking" and "checkin=" not in job.url:
+        raise RuntimeError(
+            "Booking.com watch has no dates — stop this watch and re-submit "
+            "with a check-in / check-out date range"
+        )
     driver = create_driver()
     try:
         result = route_scraper(driver, job.url)
