@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -87,6 +87,16 @@ class Job(Base):
     last_price: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     alerted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Hotel night-range watches: when set, the runner scrapes one URL per
+    # night in [date_start, date_end) and reports the cheapest. Both NULL
+    # for single-night and product watches.
+    date_start: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    date_end: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    # Set by the runner after each successful range scrape — used to
+    # render "cheapest night so far" in the watch list and inside alerts.
+    cheapest_night_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    cheapest_night_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

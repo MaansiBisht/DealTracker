@@ -27,6 +27,8 @@ from .models import Event, Job
 
 # Reuse existing scraper machinery.
 from ..scrapers import route_scraper
+from ..scrapers.booking import scrape_booking
+from ..utils.booking_url import expand_nights, with_dates
 from ..utils.driver import create_driver
 from ..utils.email import send_email
 from . import telegram as tg
@@ -55,7 +57,10 @@ def run_tick(job_id: str) -> None:
         result: dict[str, Any] | None = None
         scrape_error: str | None = None
         try:
-            result = _do_scrape(job)
+            if _is_range_job(job):
+                result = _do_range_scrape(db, job)
+            else:
+                result = _do_scrape(job)
         except Exception as e:
             scrape_error = f"{type(e).__name__}: {e}"
             log.exception("scrape failed for job %s", job.id)
@@ -96,11 +101,82 @@ def _do_scrape(job: Job) -> dict[str, Any]:
             pass
 
 
+def _is_range_job(job: Job) -> bool:
+    return bool(job.date_start and job.date_end and job.platform == "booking")
+
+
+def _do_range_scrape(db: Session, job: Job) -> dict[str, Any]:
+    """Scrape every night in [date_start, date_end), pick the cheapest.
+
+    Shares one Chromium across all nights — opening a fresh driver per
+    night would blow up the per-tick budget. Emits a `tick_result` event
+    per night so the live terminal pane shows incremental progress
+    during the (potentially long) tick.
+    """
+    nights = expand_nights(job.date_start, job.date_end)
+    if not nights:
+        raise RuntimeError("date range produced zero nights")
+
+    per_night: list[dict[str, Any]] = []
+    title: str | None = None
+
+    driver = create_driver()
+    try:
+        for checkin, checkout in nights:
+            night_url = with_dates(job.url, checkin, checkout)
+            try:
+                result = scrape_booking(driver, night_url) or {}
+            except Exception as e:
+                _emit(
+                    db, job, "error",
+                    f"night {checkin.isoformat()} scrape failed: {type(e).__name__}: {e}",
+                )
+                per_night.append({"checkin": checkin, "price": None, "status": "error"})
+                continue
+
+            if not title and result.get("title"):
+                title = result["title"]
+
+            price_num = _parse_price(result.get("price"))
+            status = (result.get("stock_status") or "unknown").lower()
+            per_night.append({"checkin": checkin, "price": price_num, "status": status})
+
+            _emit(
+                db, job, "tick_result",
+                f"night {checkin.isoformat()}: "
+                f"price={_human_price(str(price_num)) if price_num is not None else '—'} "
+                f"stock={status}",
+            )
+            db.commit()
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+    priced = [n for n in per_night if n["price"] is not None]
+    cheapest = min(priced, key=lambda n: n["price"]) if priced else None
+
+    return {
+        "is_range": True,
+        "title": title,
+        "nights": per_night,
+        "cheapest_date": cheapest["checkin"] if cheapest else None,
+        "cheapest_price": cheapest["price"] if cheapest else None,
+        "type": "hotel",
+    }
+
+
 # ---------- result handling ----------------------------------------------------
 
 def _process_result(db: Session, job: Job, result: dict[str, Any]) -> None:
     """Single-shot result handler. Works for both products and hotels —
     they share the same {price, stock_status, title?} contract."""
+    # Range scrapes have their own shape; aggregated cheapest-night logic.
+    if result.get("is_range"):
+        _process_range_result(db, job, result)
+        return
+
     stock_status = (result.get("stock_status") or "unknown").lower()
     raw_price = result.get("price")
     job.last_status = stock_status
@@ -126,6 +202,79 @@ def _process_result(db: Session, job: Job, result: dict[str, Any]) -> None:
             db, job,
             f"{label} ₹{price_num:,.2f} ≤ threshold ₹{job.threshold:,.2f}",
         )
+
+
+def _process_range_result(db: Session, job: Job, result: dict[str, Any]) -> None:
+    """Handle the aggregated output of a night-range scrape.
+
+    Persists the cheapest night onto the Job. If the cheapest beats the
+    threshold, fires a single consolidated alert (format A) naming the
+    cheapest night and listing any other below-threshold nights.
+    """
+    cheapest_date = result.get("cheapest_date")
+    cheapest_price: float | None = result.get("cheapest_price")
+    nights = result.get("nights") or []
+
+    # Persist summary on the job for the watch list.
+    if cheapest_date is not None and cheapest_price is not None:
+        job.cheapest_night_date = cheapest_date
+        job.cheapest_night_price = float(cheapest_price)
+        job.last_status = "available"
+        job.last_price = f"{cheapest_price:.0f}"
+    else:
+        job.last_status = "no-prices"
+        job.last_price = None
+
+    priced_count = sum(1 for n in nights if n.get("price") is not None)
+    _emit(
+        db, job, "tick_result",
+        f"range {job.date_start.isoformat()}→{job.date_end.isoformat()} · "
+        f"priced {priced_count}/{len(nights)} · "
+        f"cheapest={'₹{:,.0f} on {}'.format(cheapest_price, cheapest_date.isoformat()) if cheapest_price else '—'}",
+    )
+
+    # No alert if nothing priced or no threshold.
+    if cheapest_price is None or job.threshold is None:
+        return
+    if cheapest_price > job.threshold:
+        return
+
+    _alert(db, job, _format_range_alert(job, result))
+
+
+def _format_range_alert(job: Job, result: dict[str, Any]) -> str:
+    """Build the multi-line reason string for a night-range alert.
+
+    Format A: name the cheapest night, mention any other nights that
+    also beat the threshold. Plain text — the channel-specific helpers
+    (_deliver_telegram, _deliver_email) escape/wrap as needed.
+    """
+    title = result.get("title") or "Hotel"
+    cheapest_date = result.get("cheapest_date")
+    cheapest_price: float = result["cheapest_price"]
+    threshold = job.threshold or 0.0
+
+    other_below: list[str] = []
+    for n in result.get("nights") or []:
+        p = n.get("price")
+        d = n.get("checkin")
+        if p is None or d is None or d == cheapest_date:
+            continue
+        if p <= threshold:
+            other_below.append(d.strftime("%a %d %b"))
+
+    lines = [
+        f"{title}",
+        f"Best night: {cheapest_date.strftime('%a %d %b')} — ₹{cheapest_price:,.0f}",
+        f"(your threshold ₹{threshold:,.0f})",
+    ]
+    if other_below:
+        lines.append("")
+        lines.append(
+            f"{len(other_below)} other night{'s' if len(other_below) != 1 else ''} "
+            f"also below threshold: {', '.join(other_below)}"
+        )
+    return "\n".join(lines)
 
 
 def _alert(db: Session, job: Job, reason: str) -> None:

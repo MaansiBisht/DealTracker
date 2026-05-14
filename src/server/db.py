@@ -56,6 +56,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_jobs_for_v2_channels()
     _migrate_add_user_columns()
+    _migrate_add_hotel_range_columns()
 
 
 def _migrate_jobs_for_v2_channels() -> None:
@@ -134,3 +135,31 @@ def _migrate_add_user_columns() -> None:
             continue
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN user_id VARCHAR(32)"))
+
+
+def _migrate_add_hotel_range_columns() -> None:
+    """Add date_start / date_end / cheapest_night_date / cheapest_night_price.
+
+    Idempotent: existence check before ALTER. Fresh DBs get these via
+    `create_all`; only legacy DBs minted before night-range watches
+    need actual work. All four columns are nullable so existing rows
+    keep working without backfill.
+    """
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "jobs" not in insp.get_table_names():
+        return
+
+    existing = {c["name"] for c in insp.get_columns("jobs")}
+    new_columns = [
+        ("date_start", "DATE"),
+        ("date_end", "DATE"),
+        ("cheapest_night_date", "DATE"),
+        ("cheapest_night_price", "REAL"),
+    ]
+    for name, sql_type in new_columns:
+        if name in existing:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {name} {sql_type}"))

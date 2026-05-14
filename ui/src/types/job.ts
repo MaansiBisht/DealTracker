@@ -29,6 +29,13 @@ export interface Job {
   last_checked_at: string | null;
   alerted_at: string | null;
 
+  // Night-range hotel watches: stay window + cheapest night found so far.
+  // All null for product watches and single-night hotel watches.
+  date_start: string | null;
+  date_end: string | null;
+  cheapest_night_date: string | null;
+  cheapest_night_price: number | null;
+
   active: boolean;
   created_at: string;
 }
@@ -61,6 +68,9 @@ export interface JobCreatePayload {
   telegram_chat_id: string | null;
   alert_type: AlertType;
   threshold: number | null;
+  // Only set for hotel night-range watches. ISO YYYY-MM-DD.
+  date_start?: string | null;
+  date_end?: string | null;
 }
 
 export interface TelegramStatus {

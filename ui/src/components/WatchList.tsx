@@ -115,6 +115,10 @@ function Row({
 }
 
 function PriceCell({ job }: { job: Job }) {
+  // Night-range hotel watch: show "best <date> ₹X · range <start>→<end>".
+  if (job.date_start && job.date_end) {
+    return <RangePriceCell job={job} />;
+  }
   if (job.last_price) {
     return <span className="tabular text-fg truncate">{formatPrice(job.last_price)}</span>;
   }
@@ -126,6 +130,33 @@ function PriceCell({ job }: { job: Job }) {
     );
   }
   return <span className="tabular text-mute">—</span>;
+}
+
+
+function RangePriceCell({ job }: { job: Job }) {
+  const range = `${shortDate(job.date_start!)}→${shortDate(job.date_end!)}`;
+  if (job.cheapest_night_date && job.cheapest_night_price != null) {
+    return (
+      <span className="tabular text-fg truncate">
+        best {shortDate(job.cheapest_night_date)} ₹
+        {job.cheapest_night_price.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+        <span className="text-mute"> · {range}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="tabular text-mute truncate">
+      target ≤ ₹{(job.threshold ?? 0).toLocaleString('en-IN')} · {range}
+    </span>
+  );
+}
+
+
+function shortDate(iso: string): string {
+  // ISO YYYY-MM-DD → "12 Jun" — short, locale-aware.
+  const d = new Date(iso + 'T00:00:00');
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
 function formatPrice(raw: string): string {

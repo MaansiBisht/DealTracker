@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from ..utils.booking_url import MAX_NIGHTS
 
 
 JobKind = Literal["product", "hotel"]
@@ -21,6 +23,11 @@ class JobCreate(BaseModel):
     telegram_chat_id: Optional[str] = None
     alert_type: AlertType
     threshold: Optional[float] = Field(default=None, ge=0)
+    # Hotel night-range tracking. When BOTH are set, the runner scrapes
+    # one URL per night in [date_start, date_end) and reports the cheapest.
+    # Validated as a pair: either both or neither.
+    date_start: Optional[date] = None
+    date_end: Optional[date] = None
 
     @field_validator("url")
     @classmethod
@@ -66,6 +73,23 @@ class JobCreate(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_date_range(self):
+        """Both or neither, end > start, capped at MAX_NIGHTS, no past start."""
+        start, end = self.date_start, self.date_end
+        if start is None and end is None:
+            return self
+        if start is None or end is None:
+            raise ValueError("date_start and date_end must both be set or both omitted")
+        if end <= start:
+            raise ValueError("date_end must be after date_start")
+        if (end - start).days > MAX_NIGHTS:
+            raise ValueError(f"date range too long — max {MAX_NIGHTS} nights")
+        today = datetime.now(timezone.utc).date()
+        if start < today:
+            raise ValueError("date_start must be today or later")
+        return self
+
 
 class JobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -88,6 +112,13 @@ class JobOut(BaseModel):
     last_price: Optional[str]
     last_checked_at: Optional[datetime]
     alerted_at: Optional[datetime]
+
+    # Night-range hotel watches expose their stay window + the cheapest
+    # night found so far. All None for product / single-night watches.
+    date_start: Optional[date] = None
+    date_end: Optional[date] = None
+    cheapest_night_date: Optional[date] = None
+    cheapest_night_price: Optional[float] = None
 
     active: bool
     created_at: datetime

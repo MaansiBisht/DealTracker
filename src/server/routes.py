@@ -34,6 +34,7 @@ from . import telegram as tg
 # Reuse existing platform routing logic from the scrapers package.
 from ..scrapers import HOTEL_PLATFORMS, SCRAPERS, get_platform_from_url
 from ..utils.url_normalizer import normalize_url
+from ..utils.booking_url import strip_dates as strip_booking_dates
 
 # Email sender — re-used from the alerts pipeline without modification.
 from ..utils.email import send_email
@@ -112,6 +113,22 @@ def create_job(
             detail="price alerts require a threshold",
         )
 
+    # Night-range watches: only valid for hotels, only on Booking (Phase 1).
+    # Strip any checkin/checkout query params the user pasted — the runner
+    # injects them per-night.
+    if payload.date_start and payload.date_end:
+        if kind != "hotel":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date range is only supported for hotel watches",
+            )
+        if platform != "booking":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="date range is only supported for Booking.com today",
+            )
+        canonical_url = strip_booking_dates(canonical_url)
+
     job = Job(
         kind=kind,
         url=canonical_url,
@@ -124,6 +141,8 @@ def create_job(
         platform=platform,
         status="pending",
         active=True,
+        date_start=payload.date_start,
+        date_end=payload.date_end,
     )
     db.add(job)
     db.commit()

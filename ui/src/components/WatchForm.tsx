@@ -51,10 +51,14 @@ export function WatchForm({
   );
   const [alertType, setAlertType] = useState<AlertType>(alertOptions[0]);
   const [threshold, setThreshold] = useState('');
+  // Hotel night-range. Only sent when both are set AND view === 'hotel'.
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const needsThreshold = alertType === 'price' || alertType === 'price_drop';
+  const MAX_NIGHTS = 14;
 
   if (!alertOptions.includes(alertType)) {
     setAlertType(alertOptions[0]);
@@ -76,6 +80,39 @@ export function WatchForm({
       return;
     }
 
+    // Hotel: dates required. Validate range client-side; server re-validates.
+    let dateStartOut: string | null = null;
+    let dateEndOut: string | null = null;
+    if (isHotel) {
+      if (!dateStart || !dateEnd) {
+        setError('check-in and check-out dates are required for hotel watches');
+        return;
+      }
+      const s = new Date(dateStart);
+      const e = new Date(dateEnd);
+      if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) {
+        setError('invalid date');
+        return;
+      }
+      if (e <= s) {
+        setError('check-out must be after check-in');
+        return;
+      }
+      const nights = Math.round((e.getTime() - s.getTime()) / 86_400_000);
+      if (nights > MAX_NIGHTS) {
+        setError(`date range too long — max ${MAX_NIGHTS} nights`);
+        return;
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (s < today) {
+        setError('check-in must be today or later');
+        return;
+      }
+      dateStartOut = dateStart;
+      dateEndOut = dateEnd;
+    }
+
     const payload: JobCreatePayload = {
       url: url.trim(),
       email: trimmedEmail || null,
@@ -83,6 +120,8 @@ export function WatchForm({
       telegram_chat_id: trimmedChat || null,
       alert_type: alertType,
       threshold: needsThreshold ? parseFloat(threshold) : null,
+      date_start: dateStartOut,
+      date_end: dateEndOut,
     };
     if (needsThreshold && (!Number.isFinite(payload.threshold) || (payload.threshold ?? 0) <= 0)) {
       setError('threshold must be a positive number');
@@ -95,6 +134,8 @@ export function WatchForm({
       setUrl('');
       setEmail('');
       setThreshold('');
+      setDateStart('');
+      setDateEnd('');
       // Keep tgChatId + display name so a follow-up watch reuses the
       // pairing without making the user tap Start again.
     } catch (err) {
@@ -105,8 +146,10 @@ export function WatchForm({
   }
 
   const urlPlaceholder = isHotel
-    ? 'https://www.booking.com/hotel/in/...?checkin=...'
+    ? 'https://www.booking.com/hotel/in/... (no dates needed)'
     : 'https://www.amazon.in/dp/...';
+  // ISO YYYY-MM-DD for <input type="date" min=...> — today.
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   return (
     <form onSubmit={handleSubmit} className="bg-surface hairline grid gap-px">
@@ -117,6 +160,23 @@ export function WatchForm({
         onChange={setUrl}
         required
       />
+
+      {isHotel && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-px">
+          <DateField
+            label="check-in"
+            value={dateStart}
+            onChange={setDateStart}
+            min={todayIso}
+          />
+          <DateField
+            label="check-out"
+            value={dateEnd}
+            onChange={setDateEnd}
+            min={dateStart || todayIso}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-px">
         <ToggleField
@@ -529,6 +589,30 @@ function ToggleField({
     </div>
   );
 }
+
+interface DateFieldProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  min?: string;
+}
+
+function DateField({ label, value, onChange, min }: DateFieldProps) {
+  return (
+    <label className="group bg-surface hover:bg-elevated focus-within:bg-elevated transition-colors px-4 py-3 flex flex-col gap-1">
+      <span className="chrome-label">{label}</span>
+      <input
+        type="date"
+        value={value}
+        min={min}
+        onChange={(e) => onChange(e.target.value)}
+        required
+        className="bg-transparent outline-none text-fg font-mono text-[14px] tabular"
+      />
+    </label>
+  );
+}
+
 
 function CheckBox({ checked }: { checked: boolean }) {
   return (
