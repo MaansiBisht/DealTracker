@@ -84,11 +84,12 @@ def run_tick(job_id: str) -> None:
 
 def _do_scrape(job: Job) -> dict[str, Any]:
     """Single scrape pass for product and single-date hotel watches."""
-    # Booking.com requires checkin/checkout to show room prices.
-    # Without dates the page shows no rates; the scraper always returns price=None.
-    if job.platform == "booking" and "checkin=" not in job.url:
+    # Booking.com and Agoda require dates in the URL to show room prices.
+    # Without them the page shows no rates; the scraper always returns price=None.
+    _DATE_PARAMS = {"checkin=", "checkIn=", "check_in="}
+    if job.platform in ("booking", "agoda") and not any(p in job.url for p in _DATE_PARAMS):
         raise RuntimeError(
-            "Booking.com watch has no dates — stop this watch and re-submit "
+            f"{job.platform} watch has no dates — stop this watch and re-submit "
             "with a check-in / check-out date range"
         )
     driver = create_driver()

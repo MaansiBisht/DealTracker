@@ -80,10 +80,15 @@ def scrape_agoda(driver, url):
                     price = price_clean
                     break
 
-    # Check availability
-    sold_out = soup.find(string=re.compile(r'sold out|no availability|fully booked', re.IGNORECASE))
+    # Check availability — only look in dedicated containers, not the whole
+    # page. Agoda lists individual room types, some marked "Sold Out", which
+    # would falsely flag the hotel when other rooms are still bookable.
     no_rooms = soup.find('div', {'data-selenium': 'no-rooms-message'})
-    if sold_out or no_rooms:
+    page_soldout = soup.find(
+        ['div', 'section'],
+        {'data-selenium': re.compile(r'soldout|no-availability', re.IGNORECASE)},
+    )
+    if no_rooms or page_soldout:
         availability = "sold out"
     elif price:
         availability = "available"
